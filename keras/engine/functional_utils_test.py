@@ -14,6 +14,8 @@
 #,============================================================================
 """Tests for functional_utils."""
 
+import os
+
 from keras import keras_parameterized
 from keras import layers
 from keras import models
@@ -117,18 +119,19 @@ class FunctionalModelSlideTest(keras_parameterized.TestCase):
     layer2 = layers.Dense(16)
     x = layer1(inputs)
     y = layer2(x)
-    cloned_inputs, cloned_outputs = functional_utils.clone_graph_nodes(x, y)
-    # Make sure the inputs and outputs are cloned.
-    self.assertIsNot(x, cloned_inputs)
-    self.assertIsNot(y, cloned_outputs)
+    model = models.Model(x, y)
     # Make sure a new node is attached to layer2, which mimic y = layer2(x)
     self.assertLen(layer2.inbound_nodes, 2)
 
-    model = models.Model(cloned_inputs, cloned_outputs)
     self.assertIsInstance(model, models.Model)
 
     model.compile('rmsprop', 'mse')
     model.fit(np.random.randn(batch_size, 32), np.random.randn(batch_size, 16))
+
+    output_path = os.path.join(self.get_temp_dir(), 'tf_keras_saved_model')
+    model.save(output_path, save_format='tf')
+    loaded_model = models.load_model(output_path)
+    self.assertEqual(model.summary(), loaded_model.summary())
 
 
 if __name__ == '__main__':
