@@ -174,7 +174,7 @@ class PreprocessingLayer(Layer, metaclass=abc.ABCMeta):
 
     `tf.keras.Model` example with multiple adapts:
 
-    >>> layer = tf.keras.layers.experimental.preprocessing.Normalization(
+    >>> layer = tf.keras.layers.Normalization(
     ...     axis=None)
     >>> layer.adapt([0, 2])
     >>> model = tf.keras.Sequential(layer)
@@ -187,7 +187,7 @@ class PreprocessingLayer(Layer, metaclass=abc.ABCMeta):
 
     `tf.data.Dataset` example with multiple adapts:
 
-    >>> layer = tf.keras.layers.experimental.preprocessing.Normalization(
+    >>> layer = tf.keras.layers.Normalization(
     ...     axis=None)
     >>> layer.adapt([0, 2])
     >>> input_ds = tf.data.Dataset.range(3)
@@ -202,6 +202,11 @@ class PreprocessingLayer(Layer, metaclass=abc.ABCMeta):
     [array([0.], dtype=float32),
      array([1.], dtype=float32),
      array([2.], dtype=float32)]
+
+    `adapt()` is meant only as a single machine utility to compute layer state.
+    To analyze a dataset that cannot fit on a single machine, see
+    [Tensorflow Transform](https://www.tensorflow.org/tfx/transform/get_started)
+    for a multi-machine, map-reduce solution.
 
     Arguments:
         data: The data to train on. It can be passed either as a tf.data

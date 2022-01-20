@@ -15,6 +15,7 @@
 """TensorFlow-related utilities."""
 
 import collections
+import copy
 import random
 
 from keras import backend
@@ -61,6 +62,7 @@ def set_random_seed(seed):
   random.seed(seed)
   np.random.seed(seed)
   tf.random.set_seed(seed)
+  backend._SEED_GENERATOR.generator = random.Random(seed)  # pylint:disable=protected-access
 
 
 def is_tensor_or_tensor_list(v):
@@ -164,7 +166,8 @@ def map_structure_with_atomic(is_atomic_fn, map_fn, nested):
 
 def get_shapes(tensors):
   """Gets shapes from tensors."""
-  return tf.nest.map_structure(lambda x: x.shape, tensors)
+  return tf.nest.map_structure(
+      lambda x: x.shape if hasattr(x, 'shape') else None, tensors)
 
 
 #  pylint: enable=protected-access
@@ -219,6 +222,44 @@ def convert_shapes(input_shape, to_tuples=True):
 
   return map_structure_with_atomic(_is_atomic_shape, _convert_shape,
                                    input_shape)
+
+
+def validate_axis(axis, input_shape):
+  """Validate an axis value and returns its standardized form.
+
+  Args:
+    axis: Value to validate. Can be an integer or a list/tuple of integers.
+      Integers may be negative.
+    input_shape: Reference input shape that the axis/axes refer to.
+
+  Returns:
+    Normalized form of `axis`, i.e. a list with all-positive values.
+  """
+  input_shape = tf.TensorShape(input_shape)
+  rank = input_shape.rank
+  if not rank:
+    raise ValueError(
+        f'Input has undefined rank. Received: input_shape={input_shape}')
+
+  # Convert axis to list and resolve negatives
+  if isinstance(axis, int):
+    axis = [axis]
+  else:
+    axis = list(axis)
+  for idx, x in enumerate(axis):
+    if x < 0:
+      axis[idx] = rank + x
+
+  # Validate axes
+  for x in axis:
+    if x < 0 or x >= rank:
+      raise ValueError(
+          'Invalid value for `axis` argument. '
+          'Expected 0 <= axis < inputs.rank (with '
+          f'inputs.rank={rank}). Received: axis={tuple(axis)}')
+  if len(axis) != len(set(axis)):
+    raise ValueError(f'Duplicate axis: {tuple(axis)}')
+  return axis
 
 
 class ListWrapper:
@@ -517,6 +558,9 @@ def get_tensor_spec(t, dynamic_batch=False, name=None):
 
   shape_list = shape.as_list()
   shape_list[0] = None
+  # TODO(b/203201161) Remove this deepcopy one type_spec_with_shape has been
+  # updated to not mutate spec.
+  spec = copy.deepcopy(spec)
   return keras_tensor.type_spec_with_shape(spec, tf.TensorShape(shape_list))
 
 
@@ -543,13 +587,16 @@ def sync_to_numpy_or_python_type(tensors):
     tensors are converted to Numpy arrays.
   """
   if isinstance(tensors, tf.distribute.experimental.coordinator.RemoteValue):
-    return tensors.fetch()
+    tensors = tensors.fetch()
 
   def _to_single_numpy_or_python_type(t):
+    # Don't turn ragged or sparse tensors to NumPy.
     if isinstance(t, tf.Tensor):
-      x = t.numpy()
-      return x.item() if np.ndim(x) == 0 else x
-    return t  # Don't turn ragged or sparse tensors to NumPy.
+      t = t.numpy()
+    # Strings, ragged and sparse tensors don't have .item(). Return them as-is.
+    if not isinstance(t, (np.ndarray, np.generic)):
+      return t
+    return t.item() if np.ndim(t) == 0 else t
 
   return tf.nest.map_structure(_to_single_numpy_or_python_type, tensors)
 

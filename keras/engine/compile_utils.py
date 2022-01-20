@@ -14,7 +14,6 @@
 # ==============================================================================
 """Utilities for `Model.compile`."""
 
-import tensorflow.compat.v2 as tf
 
 import copy
 from keras import losses as losses_mod
@@ -22,6 +21,7 @@ from keras import metrics as metrics_mod
 from keras.utils import generic_utils
 from keras.utils import losses_utils
 from keras.utils import tf_utils
+import tensorflow.compat.v2 as tf
 
 
 class Container:
@@ -175,7 +175,7 @@ class LossesContainer(Container):
       regularization_losses: Additional losses to be added to the total loss.
 
     Returns:
-      Tuple of `(total_loss, per_output_loss_list)`
+      The total loss as a `tf.Tensor`, or `None` if no loss results.
     """
     y_true = self._conform_to_outputs(y_pred, y_true)
     sample_weight = self._conform_to_outputs(y_pred, sample_weight)
@@ -243,8 +243,7 @@ class LossesContainer(Container):
       total_loss = tf.add_n(loss_values)
       return total_loss
     else:
-      # Ok for a model to have no compiled loss.
-      return tf.zeros(shape=())
+      return None
 
   def reset_state(self):
     """Resets the state of loss metrics."""
@@ -305,6 +304,7 @@ class MetricsContainer(Container):
     """
     super(MetricsContainer, self).__init__(output_names=output_names)
 
+    self._check_duplicated_metrics(metrics, weighted_metrics)
     # Keep user-supplied values untouched for recompiling and serialization.
     self._user_metrics = metrics
     self._user_weighted_metrics = weighted_metrics
@@ -314,6 +314,39 @@ class MetricsContainer(Container):
     self._built = False
 
     self._from_serialized = from_serialized
+
+  def _check_duplicated_metrics(self, metrics, weighted_metrics):
+    """Check and raise error when user provided metrics has any duplications.
+
+    Note that metrics are stateful container, a shared metric instance between
+    model.metric and model.weighted_metric will make the same intance to be
+    udpated twice, and report wrong value.
+
+    Args:
+      metrics: User provided metrics list.
+      weighted_metrics: User provided weighted metrics list.
+
+    Raises:
+      ValueError, when duplicated metrics instance discovered in user provided
+        metrics and weighted metrics.
+    """
+    seen = set()
+    duplicated = []
+    for x in tf.nest.flatten(metrics) + tf.nest.flatten(weighted_metrics):
+      # We only check metrics object. The string and function objects
+      # will be converted to unique Metric instance.
+      if not isinstance(x, metrics_mod.Metric):
+        continue
+      if x in seen:
+        duplicated.append(x)
+      seen.add(x)
+
+    if duplicated:
+      raise ValueError('Found duplicated metrics object in the user provided '
+                       'metrics and weighted metrics. This will cause the same '
+                       'metric object to be updated multiple times, and report '
+                       'wrong results. \n'
+                       f'Duplicated items: {duplicated}')
 
   @property
   def metrics(self):
@@ -352,18 +385,26 @@ class MetricsContainer(Container):
     y_pred = tf.__internal__.nest.list_to_tuple(y_pred)
     y_true = tf.__internal__.nest.list_to_tuple(y_true)
     self._metrics = tf.__internal__.nest.list_to_tuple(self._metrics)
-    self._weighted_metrics = tf.__internal__.nest.list_to_tuple(self._weighted_metrics)
+    self._weighted_metrics = tf.__internal__.nest.list_to_tuple(
+        self._weighted_metrics)
 
     # Convert to `Metric` objects, potentially disambiguating based on output
     # properties.
-    self._metrics = tf.__internal__.nest.map_structure_up_to(y_pred, self._get_metric_objects,
-                                             self._metrics, y_true, y_pred)
-    self._weighted_metrics = tf.__internal__.nest.map_structure_up_to(y_pred,
-                                                      self._get_metric_objects,
-                                                      self._weighted_metrics,
-                                                      y_true, y_pred)
+    self._metrics = tf.__internal__.nest.map_structure_up_to(
+        y_pred,
+        self._get_metric_objects,
+        self._metrics,
+        y_true,
+        y_pred)
+    self._weighted_metrics = tf.__internal__.nest.map_structure_up_to(
+        y_pred,
+        self._get_metric_objects,
+        self._weighted_metrics,
+        y_true,
+        y_pred)
 
-    self._metrics = tf.__internal__.nest.flatten_up_to(y_pred, self._metrics, check_types=False)
+    self._metrics = tf.__internal__.nest.flatten_up_to(
+        y_pred, self._metrics, check_types=False)
     self._weighted_metrics = tf.__internal__.nest.flatten_up_to(
         y_pred, self._weighted_metrics, check_types=False)
 

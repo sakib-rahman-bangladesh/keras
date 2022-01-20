@@ -14,7 +14,6 @@
 # ==============================================================================
 """Keras SavedModel deserialization."""
 
-import os
 import re
 import types
 
@@ -108,7 +107,7 @@ def load(path, compile=True, options=None):  # pylint: disable=redefined-builtin
   meta_graph_def = tf.__internal__.saved_model.parse_saved_model(
       path).meta_graphs[0]
   object_graph_def = meta_graph_def.object_graph_def
-  path_to_metadata_pb = os.path.join(path, constants.SAVED_METADATA_PATH)
+  path_to_metadata_pb = tf.io.gfile.join(path, constants.SAVED_METADATA_PATH)
   if tf.compat.v1.gfile.Exists(path_to_metadata_pb):
     try:
       with tf.io.gfile.GFile(path_to_metadata_pb, 'rb') as f:
@@ -124,7 +123,7 @@ def load(path, compile=True, options=None):  # pylint: disable=redefined-builtin
                     'with model.save() or tf.keras.models.save_model(), *NOT* '
                     'tf.saved_model.save(). To confirm, there should be a file '
                     'named "keras_metadata.pb" in the SavedModel directory.')
-    _read_legacy_metadata(object_graph_def, metadata)
+    _read_legacy_metadata(object_graph_def, metadata, path)
 
   if not metadata.nodes:
     # When there are no Keras objects, return the results from the core loader
@@ -193,7 +192,7 @@ def _update_to_current_version(metadata):
   return metadata
 
 
-def _read_legacy_metadata(object_graph_def, metadata):
+def _read_legacy_metadata(object_graph_def, metadata, path):
   """Builds a KerasMetadata proto from the SavedModel ObjectGraphDef."""
   # Older SavedModels store the metadata directly in the proto instead of the
   # separate pb file.
@@ -202,11 +201,12 @@ def _read_legacy_metadata(object_graph_def, metadata):
     if (proto.WhichOneof('kind') == 'user_object' and
         proto.user_object.identifier in constants.KERAS_OBJECT_IDENTIFIERS):
       if not proto.user_object.metadata:
-        raise ValueError('Unable to create a Keras model from this SavedModel. '
-                         'This SavedModel was created with '
-                         '`tf.saved_model.save`, and lacks the Keras metadata.'
-                         'Please save your Keras model by calling `model.save`'
-                         'or `tf.keras.models.save_model`.')
+        raise ValueError(
+            f'Unable to create a Keras model from SavedModel at {path}. '
+            'This SavedModel was exported with `tf.saved_model.save`, and '
+            'lacks the Keras metadata file. Please save your Keras model by '
+            'calling `model.save`or `tf.keras.models.save_model`. Note that '
+            'you can still load this SavedModel with `tf.saved_model.load`.')
       metadata.nodes.add(
           node_id=node_id,
           node_path=node_paths[node_id],
@@ -523,16 +523,24 @@ class KerasObjectLoader:
       obj = layers_module.deserialize(
           generic_utils.serialize_keras_class_and_config(
               class_name, config, shared_object_id=shared_object_id))
-    except ValueError:
-      if must_restore_from_config:
+    except (TypeError, KeyError) as e:
+      # A name conflict has occurred. The `class_name` is in the Keras native
+      # framework; however, the value in the framework is different from the
+      # user's class definition which confuses the KerasObjectLoader.
+      builtin_layer = layers_module.get_builtin_layer(class_name)
+      if builtin_layer:
         raise RuntimeError(
-            f'Unable to restore a layer of class {class_name}. Layers of '
-            f'class {class_name} require that the class be provided to '
-            'the model loading code, either by registering the '
-            'class using `@keras.utils.register_keras_serializable` '
-            'on the class def and including that file in your '
-            'program, or by passing the class in a '
-            '`keras.utils.CustomObjectScope` that wraps this load call.')
+            f'Unable to restore object of class \'{class_name}\' likely due to '
+            f'name conflict with built-in Keras class \'{builtin_layer}\'. To '
+            'override the built-in Keras definition of the object, decorate '
+            'your class with `@keras.utils.register_keras_serializable` and '
+            'include that file in your program, or pass your class in a '
+            '`keras.utils.CustomObjectScope` that wraps this load call.') from e
+      else:
+        raise
+    except ValueError as e:
+      if must_restore_from_config:
+        raise e
       else:
         return None
 
@@ -776,7 +784,6 @@ class KerasObjectLoader:
 
   def _infer_inputs(self, layer_node_id, convert_to_shapes=False):
     """Infers input shape of layer from SavedModel functions."""
-    coder = tf.__internal__.saved_model.StructureCoder()
     call_fn_id = self._search_for_child_node(
         layer_node_id, ['call_and_return_all_conditional_losses'])
     if call_fn_id is None:
@@ -788,7 +795,7 @@ class KerasObjectLoader:
       return None
     call_fn_name = concrete_functions[0]
     call_fn_proto = self._proto.concrete_functions[call_fn_name]
-    structured_input_signature = coder.decode_proto(
+    structured_input_signature = tf.__internal__.saved_model.decode_proto(
         call_fn_proto.canonicalized_input_signature)
     inputs = structured_input_signature[0][0]
     if convert_to_shapes:
@@ -1127,59 +1134,22 @@ def recursively_deserialize_keras_object(config, module_objects=None):
         f'tuple or list. Received: config={config}')
 
 
-def get_common_shape(x, y):
-  """Find a `TensorShape` that is compatible with both `x` and `y`."""
-  if x is None != y is None:
-    raise RuntimeError(
-        'Cannot find a common shape when LHS shape is None but RHS shape '
-        'is not (or vice versa): %s vs. %s' % (x, y))
-  if x is None:
-    return None  # The associated input was not a Tensor, no shape generated.
-  if not isinstance(x, tf.TensorShape):
-    raise TypeError(
-        f'Expected x to be a TensorShape but received {x} with type {type(x)}')
-  if not isinstance(y, tf.TensorShape):
-    raise TypeError(
-        f'Expected y to be a TensorShape but received {y} with type {type(y)}')
-  if x.rank != y.rank or x.rank is None:
-    return tf.TensorShape(None)
-  dims = []
-  for dim_x, dim_y in zip(x.dims, y.dims):
-    if (dim_x != dim_y
-        or tf.compat.dimension_value(dim_x) is None
-        or tf.compat.dimension_value(dim_y) is None):
-      dims.append(None)
-    else:
-      dims.append(tf.compat.dimension_value(dim_x))
-  return tf.TensorShape(dims)
-
-
 def infer_inputs_from_restored_call_function(fn):
-  """Returns TensorSpec of inputs from a restored call function.
+  """Returns TypeSpec of inputs from a restored call function.
 
   Args:
     fn: Restored layer call function. It is assumed that `fn` has at least
         one concrete function and that the inputs are in the first argument.
 
   Returns:
-    TensorSpec of call function inputs in the form of (args, kwargs)
+    TypeSpec of call function inputs in the form of (args, kwargs)
   """
   def common_spec(x, y):
-    if not isinstance(x, tf.TensorSpec):
+    if not isinstance(x, tf.TypeSpec):
       # Doesn't particularly matter what is returned in this case because the
       # result will be filtered out in _set_input_shape.
       return x
-    common_shape = get_common_shape(x.shape, y.shape)
-    if isinstance(x, tf.SparseTensorSpec):
-      return tf.SparseTensorSpec(common_shape, x.dtype)
-    elif isinstance(x, tf.RaggedTensorSpec):
-      return tf.RaggedTensorSpec(
-          common_shape,
-          x.dtype,
-          ragged_rank=x.ragged_rank,
-          row_splits_dtype=x.row_splits_dtype,
-          flat_values_spec=x.flat_values_spec)
-    return tf.TensorSpec(common_shape, x.dtype, x.name)
+    return x.most_specific_compatible_type(y)
 
   spec = fn.concrete_functions[0].structured_input_signature
   for concrete in fn.concrete_functions[1:]:

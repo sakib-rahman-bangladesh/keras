@@ -9,17 +9,11 @@ load("@org_keras//keras:keras.bzl", "tf_py_test")  # buildifier: disable=same-or
 package(
     # TODO(scottzhu): Remove this deps when distribute test are converted to integration test.
     default_visibility = [
-        "//keras:__subpackages__",
+        "//keras:friends",
         "//third_party/tensorflow/python/distribute:__pkg__",
         "//third_party/tensorflow/tools/pip_package:__pkg__",
     ],
     licenses = ["notice"],
-)
-
-filegroup(
-    name = "all_py_srcs",
-    srcs = glob(["*.py"]),
-    visibility = ["//keras/google/private_tf_api_test:__pkg__"],
 )
 
 py_library(
@@ -69,6 +63,7 @@ py_library(
     srcs_version = "PY3",
     deps = [
         "//:expect_tensorflow_installed",
+        "//keras/optimizer_experimental:optimizer",
         "//keras/optimizer_v2",
     ],
 )
@@ -276,7 +271,7 @@ distribute_py_test(
     disable_mlir_bridge = False,
     full_precision = True,
     main = "keras_premade_models_test.py",
-    shard_count = 4,
+    shard_count = 8,
     tags = [
         "multi_and_single_gpu",
         "nomultivm",  # TODO(b/170502145)
@@ -418,6 +413,7 @@ distribute_py_test(
         "no_windows_gpu",
         "noasan",  # TODO(b/337374867) fails with -fsanitize=null
         "nomultivm",  # TODO(b/170502145)
+        "notpu",  # TODO(b/210148661)
         "notsan",
     ],
     xla_enable_strict_auto_jit = False,  # Tensorflow also fails.
@@ -450,6 +446,7 @@ distribute_py_test(
     main = "keras_models_test.py",
     tags = [
         "multi_and_single_gpu",
+        "no_oss",  # TODO(b/202850066)
         "nomultivm",  # TODO(b/170502145)
     ],
     deps = [
@@ -579,10 +576,7 @@ distribute_py_test(
     main = "minimize_loss_test.py",
     tags = [
         "multi_and_single_gpu",
-        "no_oss",  # TODO(b/139815303): enable after this is fixed.
-        "noguitar",  # TODO(b/140755528): enable after this is fixed.
         "nomultivm",  # TODO(b/170502145)
-        "notap",  # TODO(b/139815303): enable after this is fixed.
     ],
     deps = [
         ":optimizer_combinations",
@@ -772,9 +766,10 @@ distribute_py_test(
     shard_count = 50,
     tags = [
         "multi_gpu",
-        "no_oss",  # TODO(b/183640564): Reenable
+        "no_oss",  # TODO(b/183640564): Re-enable
         "no_rocm",
         "nomultivm",  # TODO(b/170502145)
+        "notpu",  # TODO(b/210168103)
         "notsan",  # TODO(b/184542721)
     ],
     deps = [
@@ -796,7 +791,7 @@ distribute_py_test(
     shard_count = 21,
     tags = [
         "multi_gpu",
-        "no_oss",  # TODO(b/183640564): Reenable
+        "no_oss",  # TODO(b/183640564): Re-enable
         "no_rocm",
         "nomultivm",  # TODO(b/170502145)
         "notsan",  # TODO(b/184542721)
@@ -869,6 +864,7 @@ py_library(
     srcs_version = "PY3",
     deps = [
         "//:expect_tensorflow_installed",
+        "//keras/legacy_tf_layers:layers",
     ],
 )
 

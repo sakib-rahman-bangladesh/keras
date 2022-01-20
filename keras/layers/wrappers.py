@@ -508,6 +508,10 @@ class Bidirectional(Wrapper):
     self._num_constants = 0
     self.input_spec = layer.input_spec
 
+  @property
+  def _use_input_spec_as_call_signature(self):
+    return self.layer._use_input_spec_as_call_signature
+
   def _verify_layer_config(self):
     """Ensure the forward and backward layers have valid common property."""
     if self.forward_layer.go_backwards == self.backward_layer.go_backwards:
@@ -589,7 +593,7 @@ class Bidirectional(Wrapper):
     additional_inputs = []
     additional_specs = []
     if initial_state is not None:
-      # Check if `initial_state` can be splitted into half
+      # Check if `initial_state` can be split into half
       num_states = len(initial_state)
       if num_states % 2 > 0:
         raise ValueError(

@@ -16,8 +16,6 @@
 # pylint: disable=g-classes-have-attributes
 """Callbacks: utilities called at certain points during model training."""
 
-import tensorflow.compat.v2 as tf
-
 import collections
 import copy
 import csv
@@ -27,19 +25,23 @@ import re
 import sys
 import time
 
-import numpy as np
+
 from keras import backend
 from keras.distribute import distributed_file_utils
 from keras.distribute import worker_training_state
 from keras.optimizer_v2 import learning_rate_schedule
 from keras.utils import generic_utils
+from keras.utils import io_utils
 from keras.utils import tf_utils
 from keras.utils import version_utils
 from keras.utils.data_utils import Sequence
 from keras.utils.generic_utils import Progbar
-from keras.utils.io_utils import path_to_string
 from keras.utils.mode_keys import ModeKeys
+import numpy as np
+import tensorflow.compat.v2 as tf
+
 from tensorflow.python.platform import tf_logging as logging
+from tensorflow.python.util import deprecation  # pylint: disable=g-direct-tensorflow-import
 from tensorflow.python.util.tf_export import keras_export
 from tensorflow.tools.docs import doc_controls
 
@@ -251,13 +253,13 @@ class CallbackList:
       elif isinstance(cb, History):
         self._history = cb
 
-    if self._progbar is None and add_progbar:
-      self._progbar = ProgbarLogger(count_mode='steps')
-      self.callbacks.insert(0, self._progbar)
-
     if self._history is None and add_history:
       self._history = History()
       self.callbacks.append(self._history)
+
+    if self._progbar is None and add_progbar:
+      self._progbar = ProgbarLogger(count_mode='steps')
+      self.callbacks.append(self._progbar)
 
   def _process_logs(self, logs, is_batch_hook=False):
     """Turns tensors into numpy arrays or Python scalars if necessary."""
@@ -599,7 +601,7 @@ class Callback:
 
   1. You should pack all your callbacks into a single `callbacks.CallbackList`
      so they can all be called together.
-  2. You will need to manually call all the `on_*` methods at the apropriate
+  2. You will need to manually call all the `on_*` methods at the appropriate
      locations in your loop. Like this:
 
      ```
@@ -943,7 +945,7 @@ class TerminateOnNaN(Callback):
     if loss is not None:
       loss = tf_utils.sync_to_numpy_or_python_type(loss)
       if np.isnan(loss) or np.isinf(loss):
-        print('Batch %d: Invalid loss, terminating training' % (batch))
+        io_utils.print_msg(f'Batch {batch}: Invalid loss, terminating training')
         self.model.stop_training = True
 
 
@@ -1026,7 +1028,7 @@ class ProgbarLogger(Callback):
     self._reset_progbar()
     self._maybe_init_progbar()
     if self.verbose and self.epochs > 1:
-      print('Epoch %d/%d' % (epoch + 1, self.epochs))
+      io_utils.print_msg(f'Epoch {epoch + 1}/{self.epochs}')
 
   def on_train_batch_end(self, batch, logs=None):
     self._batch_update_progbar(batch, logs)
@@ -1129,7 +1131,7 @@ class History(Callback):
   >>> model = tf.keras.models.Sequential([tf.keras.layers.Dense(10)])
   >>> model.compile(tf.keras.optimizers.SGD(), loss='mse')
   >>> history = model.fit(np.arange(100).reshape(5, 20), np.zeros(5),
-  ...                     epochs=10)
+  ...                     epochs=10, verbose=1)
   >>> print(history.params)
   {'verbose': 1, 'epochs': 10, 'steps': 1}
   >>> # check the keys of history object
@@ -1226,7 +1228,8 @@ class ModelCheckpoint(Callback):
           `history = model.fit()`
         * Multi-output models set additional prefixes on the metric names.
 
-      verbose: verbosity mode, 0 or 1.
+      verbose: Verbosity mode, 0 or 1. Mode 0 is silent, and mode 1
+        displays messages when the callback takes an action.
       save_best_only: if `save_best_only=True`, it only saves when the model
         is considered the "best" and the latest best model according to the
         quantity monitored will not be overwritten. If `filepath` doesn't
@@ -1253,6 +1256,10 @@ class ModelCheckpoint(Callback):
       options: Optional `tf.train.CheckpointOptions` object if
         `save_weights_only` is true or optional `tf.saved_model.SaveOptions`
         object if `save_weights_only` is false.
+      initial_value_threshold: Floating point initial "best" value of the metric
+        to be monitored. Only applies if `save_best_value=True`. Only overwrites
+        the model weights already saved if the performance of current
+        model is better than this value.
       **kwargs: Additional arguments for backwards compatibility. Possible key
         is `period`.
   """
@@ -1266,18 +1273,20 @@ class ModelCheckpoint(Callback):
                mode='auto',
                save_freq='epoch',
                options=None,
+               initial_value_threshold=None,
                **kwargs):
     super(ModelCheckpoint, self).__init__()
     self._supports_tf_logs = True
     self.monitor = monitor
     self.verbose = verbose
-    self.filepath = path_to_string(filepath)
+    self.filepath = io_utils.path_to_string(filepath)
     self.save_best_only = save_best_only
     self.save_weights_only = save_weights_only
     self.save_freq = save_freq
     self.epochs_since_last_save = 0
     self._batches_seen_since_last_saving = 0
     self._last_batch_seen = 0
+    self.best = initial_value_threshold
 
     if save_weights_only:
       if options is None or isinstance(
@@ -1322,17 +1331,21 @@ class ModelCheckpoint(Callback):
 
     if mode == 'min':
       self.monitor_op = np.less
-      self.best = np.Inf
+      if self.best is None:
+        self.best = np.Inf
     elif mode == 'max':
       self.monitor_op = np.greater
-      self.best = -np.Inf
+      if self.best is None:
+        self.best = -np.Inf
     else:
       if 'acc' in self.monitor or self.monitor.startswith('fmeasure'):
         self.monitor_op = np.greater
-        self.best = -np.Inf
+        if self.best is None:
+          self.best = -np.Inf
       else:
         self.monitor_op = np.less
-        self.best = np.Inf
+        if self.best is None:
+          self.best = np.Inf
 
     if self.save_freq != 'epoch' and not isinstance(self.save_freq, int):
       raise ValueError(
@@ -1419,9 +1432,10 @@ class ModelCheckpoint(Callback):
           else:
             if self.monitor_op(current, self.best):
               if self.verbose > 0:
-                print('\nEpoch %05d: %s improved from %0.5f to %0.5f,'
-                      ' saving model to %s' % (epoch + 1, self.monitor,
-                                               self.best, current, filepath))
+                io_utils.print_msg(
+                    f'\nEpoch {epoch + 1}: {self.monitor} improved '
+                    f'from {self.best:.5f} to {current:.5f}, '
+                    f'saving model to {filepath}')
               self.best = current
               if self.save_weights_only:
                 self.model.save_weights(
@@ -1430,11 +1444,13 @@ class ModelCheckpoint(Callback):
                 self.model.save(filepath, overwrite=True, options=self._options)
             else:
               if self.verbose > 0:
-                print('\nEpoch %05d: %s did not improve from %0.5f' %
-                      (epoch + 1, self.monitor, self.best))
+                io_utils.print_msg(
+                    f'\nEpoch {epoch + 1}: '
+                    f'{self.monitor} did not improve from {self.best:.5f}')
         else:
           if self.verbose > 0:
-            print('\nEpoch %05d: saving model to %s' % (epoch + 1, filepath))
+            io_utils.print_msg(
+                f'\nEpoch {epoch + 1}: saving model to {filepath}')
           if self.save_weights_only:
             self.model.save_weights(
                 filepath, overwrite=True, options=self._options)
@@ -1583,30 +1599,40 @@ class ModelCheckpoint(Callback):
       return file_path_with_largest_file_name
 
 
-@keras_export('keras.callbacks.experimental.BackupAndRestore', v1=[])
+@keras_export('keras.callbacks.BackupAndRestore', v1=[])
 class BackupAndRestore(Callback):
   """Callback to back up and restore the training state.
 
-  `BackupAndRestore` callback is intended to recover from interruptions that
-  happened in the middle of a model.fit execution by backing up the
-  training states in a temporary checkpoint file (based on TF CheckpointManager)
-  at the end of each epoch. If training restarted before completion, the
-  training state and model are restored to the most recently saved state at the
-  beginning of a new model.fit() run.
-  Note that user is responsible to bring jobs back up.
+  `BackupAndRestore` callback is intended to recover training from an
+  interruption that has happened in the middle of a `Model.fit` execution, by
+  backing up the training states in a temporary checkpoint file (with the help
+  of a `tf.train.CheckpointManager`), at the end of each epoch. Each backup
+  overwrites the previously written checkpoint file, so at any given time there
+  is at most one such checkpoint file for backup/restoring purpose.
+
+  If training restarts before completion, the training state (which includes the
+  `Model` weights and epoch number) is restored to the most recently saved state
+  at the beginning of a new `Model.fit` run. At the completion of a `Model.fit`
+  run, the temporary checkpoint file is deleted.
+
+  Note that the user is responsible to bring jobs back after the interruption.
   This callback is important for the backup and restore mechanism for fault
-  tolerance purpose. And the model to be restored from an previous checkpoint is
+  tolerance purpose, and the model to be restored from an previous checkpoint is
   expected to be the same as the one used to back up. If user changes arguments
   passed to compile or fit, the checkpoint saved for fault tolerance can become
   invalid.
 
   Note:
-  1. This callback is not compatible with disabling eager execution.
-  2. A checkpoint is saved at the end of each epoch, when restoring we'll redo
-  any partial work from an unfinished epoch in which the training got restarted
-  (so the work done before a interruption doesn't affect the final model state).
-  3. This works for both single worker and multi-worker mode, only
-  MirroredStrategy and MultiWorkerMirroredStrategy are supported for now.
+
+  1. This callback is not compatible with eager execution disabled.
+  2. A checkpoint is saved at the end of each epoch. After restoring,
+  `Model.fit` redoes any partial work during the unfinished epoch in which the
+  training got restarted (so the work done before the interruption doesn't
+  affect the final model state).
+  3. This works for both single worker and multi-worker modes. When `Model.fit`
+  is used with `tf.distribute`, it supports `tf.distribute.MirroredStrategy`,
+  `tf.distribute.MultiWorkerMirroredStrategy`, `tf.distribute.TPUStrategy`, and
+  `tf.distribute.experimental.ParameterServerStrategy`.
 
   Example:
 
@@ -1697,6 +1723,25 @@ class BackupAndRestore(Callback):
     self._training_state.back_up(epoch)
 
 
+@keras_export('keras.callbacks.experimental.BackupAndRestore', v1=[])
+@deprecation.deprecated_endpoints(
+    'keras.callbacks.experimental.BackupAndRestore')
+class BackupAndRestoreExperimental(BackupAndRestore):
+  """Deprecated. Please use `tf.keras.callbacks.BackupAndRestore` instead.
+
+  Caution: `tf.keras.callbacks.experimental.BackupAndRestore` endpoint is
+    deprecated and will be removed in a future release. Please use
+    `tf.keras.callbacks.BackupAndRestore`.
+  """
+
+  def __init__(self, *args, **kwargs):
+    logging.warning(
+        '`tf.keras.callbacks.experimental.BackupAndRestore` endpoint is '
+        'deprecated and will be removed in a future release. Please use '
+        '`tf.keras.callbacks.BackupAndRestore`.')
+    super(BackupAndRestoreExperimental, self).__init__(*args, **kwargs)
+
+
 @keras_export('keras.callbacks.EarlyStopping')
 class EarlyStopping(Callback):
   """Stop training when a monitored metric has stopped improving.
@@ -1719,7 +1764,8 @@ class EarlyStopping(Callback):
         improvement.
     patience: Number of epochs with no improvement
         after which training will be stopped.
-    verbose: verbosity mode.
+    verbose: Verbosity mode, 0 or 1. Mode 0 is silent, and mode 1
+        displays messages when the callback takes an action.
     mode: One of `{"auto", "min", "max"}`. In `min` mode,
         training will stop when the quantity
         monitored has stopped decreasing; in `"max"`
@@ -1825,13 +1871,15 @@ class EarlyStopping(Callback):
       self.model.stop_training = True
       if self.restore_best_weights and self.best_weights is not None:
         if self.verbose > 0:
-          print('Restoring model weights from the end of the best epoch: '
-                f'{self.best_epoch + 1}.')
+          io_utils.print_msg(
+              'Restoring model weights from the end of the best epoch: '
+              f'{self.best_epoch + 1}.')
         self.model.set_weights(self.best_weights)
 
   def on_train_end(self, logs=None):
     if self.stopped_epoch > 0 and self.verbose > 0:
-      print('Epoch %05d: early stopping' % (self.stopped_epoch + 1))
+      io_utils.print_msg(
+          f'Epoch {self.stopped_epoch + 1}: early stopping')
 
   def get_monitor_value(self, logs):
     logs = logs or {}
@@ -1968,8 +2016,9 @@ class LearningRateScheduler(Callback):
           f'The dtype of `lr` Tensor should be float. Got: {lr.dtype}')
     backend.set_value(self.model.optimizer.lr, backend.get_value(lr))
     if self.verbose > 0:
-      print('\nEpoch %05d: LearningRateScheduler setting learning '
-            'rate to %s.' % (epoch + 1, lr))
+      io_utils.print_msg(
+          f'\nEpoch {epoch + 1}: LearningRateScheduler setting learning '
+          f'rate to {lr}.')
 
   def on_epoch_end(self, epoch, logs=None):
     logs = logs or {}
@@ -2013,8 +2062,8 @@ def keras_model_summary(name, data, step=None):
     logging.warning('Model failed to serialize as JSON. Ignoring... %s', exc)
     return False
 
-  with tf.summary.experimental.summary_scope(name, 'graph_keras_model',
-                                    [data, step]) as (tag, _):
+  with tf.summary.experimental.summary_scope(
+      name, 'graph_keras_model', [data, step]) as (tag, _):
     with tf.device('cpu:0'):
       tensor = tf.constant(json_string, dtype=tf.string)
     return tf.summary.write(
@@ -2073,8 +2122,7 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
       profile_batch: Profile the batch(es) to sample compute characteristics.
         profile_batch must be a non-negative integer or a tuple of integers.
         A pair of positive integers signify a range of batches to profile.
-        By default, it will profile the second batch. Set profile_batch=0
-        to disable profiling.
+        By default, profiling is disabled.
       embeddings_freq: frequency (in epochs) at which embedding layers will be
         visualized. If set to 0, embeddings won't be visualized.
       embeddings_metadata: Dictionary which maps embedding layer names to the
@@ -2159,7 +2207,7 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
                write_images=False,
                write_steps_per_second=False,
                update_freq='epoch',
-               profile_batch=2,
+               profile_batch=0,
                embeddings_freq=0,
                embeddings_metadata=None,
                **kwargs):
@@ -2167,7 +2215,7 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
     self._supports_tf_logs = True
     self._validate_kwargs(kwargs)
 
-    self.log_dir = path_to_string(log_dir)
+    self.log_dir = io_utils.path_to_string(log_dir)
     self.histogram_freq = histogram_freq
     self.write_graph = write_graph
     self.write_images = write_images
@@ -2342,6 +2390,7 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
 
   def _init_profile_batch(self, profile_batch):
     """Validate profile_batch value and set the range of batches to profile.
+
     Sets values of _start_batch and _stop_batch attributes,
     specifying the start and stop batch to profile.
     Setting `profile_batch=0` disables profiling.
@@ -2352,7 +2401,7 @@ class TensorBoard(Callback, version_utils.TensorBoardVersionSelector):
         of positive integers signify a range of batches to profile.
 
     Raises:
-      ValueError: If profile_batch is not an integer or a comma seperated pair
+      ValueError: If profile_batch is not an integer or a comma separated pair
                   of positive integers.
 
     """
@@ -2707,8 +2756,9 @@ class ReduceLROnPlateau(Callback):
             new_lr = max(new_lr, self.min_lr)
             backend.set_value(self.model.optimizer.lr, new_lr)
             if self.verbose > 0:
-              print('\nEpoch %05d: ReduceLROnPlateau reducing learning '
-                    'rate to %s.' % (epoch + 1, new_lr))
+              io_utils.print_msg(
+                  f'\nEpoch {epoch +1}: '
+                  f'ReduceLROnPlateau reducing learning rate to {new_lr}.')
             self.cooldown_counter = self.cooldown
             self.wait = 0
 
@@ -2739,7 +2789,7 @@ class CSVLogger(Callback):
 
   def __init__(self, filename, separator=',', append=False):
     self.sep = separator
-    self.filename = path_to_string(filename)
+    self.filename = io_utils.path_to_string(filename)
     self.append = append
     self.writer = None
     self.keys = None

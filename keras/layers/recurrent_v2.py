@@ -12,17 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-# pylint: disable=g-classes-have-attributes
+# pylint: disable=g-classes-have-attributes,g-direct-tensorflow-import
 """Recurrent layers for TF 2."""
 
-import tensorflow.compat.v2 as tf
 
 import uuid
-from tensorflow.python.eager.context import get_device_name
+
 from keras import activations
 from keras import backend
+from keras.engine import base_layer
 from keras.engine.input_spec import InputSpec
 from keras.layers import recurrent
+
+import tensorflow.compat.v2 as tf
+from tensorflow.python.eager.context import get_device_name
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.util.tf_export import keras_export
 
@@ -201,7 +204,8 @@ class GRUCell(recurrent.GRUCell):
 
 
 @keras_export('keras.layers.GRU', v1=[])
-class GRU(recurrent.DropoutRNNCellMixin, recurrent.GRU):
+class GRU(recurrent.DropoutRNNCellMixin,
+          recurrent.GRU, base_layer.BaseRandomLayer):
   """Gated Recurrent Unit - Cho et al. 2014.
 
   See [the Keras RNN API guide](https://www.tensorflow.org/guide/keras/rnn)
@@ -417,9 +421,7 @@ class GRU(recurrent.DropoutRNNCellMixin, recurrent.GRU):
     input_shape = backend.int_shape(inputs)
     timesteps = input_shape[0] if self.time_major else input_shape[1]
 
-    # TODO(b/156447398) Investigate why the cuDNN kernel fails with ragged
-    # inputs.
-    if is_ragged_input or not self._could_use_gpu_kernel:
+    if not self._could_use_gpu_kernel:
       kwargs = {'training': training}
       self._maybe_reset_cell_dropout_mask(self.cell)
 
@@ -612,7 +614,10 @@ def standard_gru(inputs, init_h, kernel, recurrent_kernel, bias, mask,
 def gpu_gru(inputs, init_h, kernel, recurrent_kernel, bias, mask, time_major,
             go_backwards, sequence_lengths):
   """GRU with cuDNN implementation which is only available for GPU."""
-  if not time_major and mask is None:
+  if mask is not None:
+    sequence_lengths = calculate_sequence_by_mask(mask, time_major)
+
+  if not time_major and sequence_lengths is None:
     inputs = tf.transpose(inputs, perm=(1, 0, 2))
     seq_axis, batch_axis = (0, 1)
   else:
@@ -645,9 +650,6 @@ def gpu_gru(inputs, init_h, kernel, recurrent_kernel, bias, mask, time_major,
       shape=tf.constant([-1]),
       transpose_weights=True)
 
-  if mask is not None:
-    sequence_lengths = calculate_sequence_by_mask(mask, time_major)
-
   if sequence_lengths is not None:
     if go_backwards:
       # Three reversals are required. E.g.,
@@ -679,7 +681,7 @@ def gpu_gru(inputs, init_h, kernel, recurrent_kernel, bias, mask, time_major,
         is_training=True, rnn_mode='gru')
 
   last_output = outputs[-1]
-  if not time_major and mask is None:
+  if not time_major and sequence_lengths is None:
     outputs = tf.transpose(outputs, perm=[1, 0, 2])
   h = tf.squeeze(h, axis=seq_axis)
 
@@ -689,7 +691,7 @@ def gpu_gru(inputs, init_h, kernel, recurrent_kernel, bias, mask, time_major,
   # get the final effect output instead just 0s at the last timestep.
   # In order to mimic the default keras behavior, we copy the final h state as
   # the last_output, since it is numerically same as the output.
-  if mask is not None:
+  if sequence_lengths is not None:
     last_output = h
 
   return last_output, outputs, h, _runtime(_RUNTIME_GPU)
@@ -941,7 +943,8 @@ class LSTMCell(recurrent.LSTMCell):
 
 
 @keras_export('keras.layers.LSTM', v1=[])
-class LSTM(recurrent.DropoutRNNCellMixin, recurrent.LSTM):
+class LSTM(recurrent.DropoutRNNCellMixin,
+           recurrent.LSTM, base_layer.BaseRandomLayer):
   """Long Short-Term Memory layer - Hochreiter 1997.
 
   See [the Keras RNN API guide](https://www.tensorflow.org/guide/keras/rnn)
@@ -1145,9 +1148,7 @@ class LSTM(recurrent.DropoutRNNCellMixin, recurrent.LSTM):
     input_shape = backend.int_shape(inputs)
     timesteps = input_shape[0] if self.time_major else input_shape[1]
 
-    # TODO(b/156447398) Investigate why the cuDNN kernel fails with ragged
-    # inputs.
-    if is_ragged_input or not self._could_use_gpu_kernel:
+    if not self._could_use_gpu_kernel:
       # Fall back to use the normal LSTM.
       kwargs = {'training': training}
       self._maybe_reset_cell_dropout_mask(self.cell)
@@ -1429,7 +1430,10 @@ def gpu_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias, mask,
     runtime: Constant string tensor which indicate real runtime hardware. This
       value is for testing purpose and should not be used by user.
   """
-  if not time_major and mask is None:
+  if mask is not None:
+    sequence_lengths = calculate_sequence_by_mask(mask, time_major)
+
+  if not time_major and sequence_lengths is None:
     inputs = tf.transpose(inputs, perm=(1, 0, 2))
     seq_axis, batch_axis = (0, 1)
   else:
@@ -1463,9 +1467,6 @@ def gpu_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias, mask,
       biases=tf.split(full_bias, 8),
       shape=tf.constant([-1]),
       transpose_weights=True)
-
-  if mask is not None:
-    sequence_lengths = calculate_sequence_by_mask(mask, time_major)
 
   if sequence_lengths is not None:
     if go_backwards:
@@ -1501,7 +1502,7 @@ def gpu_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias, mask,
         is_training=True, rnn_mode='lstm')
 
   last_output = outputs[-1]
-  if not time_major and mask is None:
+  if not time_major and sequence_lengths is None:
     outputs = tf.transpose(outputs, perm=[1, 0, 2])
   h = tf.squeeze(h, axis=seq_axis)
   c = tf.squeeze(c, axis=seq_axis)
@@ -1512,7 +1513,7 @@ def gpu_lstm(inputs, init_h, init_c, kernel, recurrent_kernel, bias, mask,
   # get the final effect output instead just 0s at the last timestep.
   # In order to mimic the default keras behavior, we copy the final h state as
   # the last_output, since it is numerically same as the output.
-  if mask is not None:
+  if sequence_lengths is not None:
     last_output = h
   return last_output, outputs, h, c, _runtime(_RUNTIME_GPU)
 

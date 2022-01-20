@@ -43,7 +43,7 @@ class ReductionV2:
      `Reduction.NONE` just means that no **additional** reduction is applied by
      the class wrapper. For categorical losses with an example input shape of
      `[batch, W, H, n_classes]` the `n_classes` dimension is reduced. For
-     pointwise losses your must include a dummy axis so that `[batch, W, H, 1]`
+     pointwise losses you must include a dummy axis so that `[batch, W, H, 1]`
      is reduced to `[batch, W, H]`. Without the dummy axis `[batch, W, H]`
      will be incorrectly reduced to `[batch, W]`.
 
@@ -307,16 +307,20 @@ def compute_weighted_loss(losses,
     if not isinstance(losses,
                       (keras_tensor.KerasTensor, tf.RaggedTensor)):
       losses = tf.convert_to_tensor(losses)
-    input_dtype = losses.dtype
 
     if not isinstance(sample_weight,
                       (keras_tensor.KerasTensor, tf.RaggedTensor)):
       sample_weight = tf.convert_to_tensor(sample_weight)
 
-    # TODO(psv): Handle casting here in a better way, eg. if losses is float64
-    # we do not want to lose precision.
-    losses = tf.cast(losses, 'float32')
-    sample_weight = tf.cast(sample_weight, 'float32')
+    # Convert any non float dtypes to floats, to avoid it loss any precision for
+    # dtype like int or bool.
+    if not losses.dtype.is_floating:
+      input_dtype = losses.dtype
+      losses = tf.cast(losses, 'float32')
+      input_casted = True
+    else:
+      input_casted = False
+    sample_weight = tf.cast(sample_weight, losses.dtype)
     # Update dimensions of `sample_weight` to match with `losses` if possible.
     losses, _, sample_weight = squeeze_or_expand_dimensions(  # pylint: disable=unbalanced-tuple-unpacking
         losses, None, sample_weight)
@@ -324,8 +328,9 @@ def compute_weighted_loss(losses,
 
     # Apply reduction function to the individual weighted losses.
     loss = reduce_weighted_loss(weighted_losses, reduction)
-    # Convert the result back to the input type.
-    loss = tf.cast(loss, input_dtype)
+    if input_casted:
+      # Convert the result back to the input type.
+      loss = tf.cast(loss, input_dtype)
     return loss
 
 

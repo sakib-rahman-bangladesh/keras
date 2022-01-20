@@ -31,6 +31,7 @@ class LossesContainerTest(keras_parameterized.TestCase):
 
     self.assertTrue(loss_container._built)
     self.assertLen(loss_container._losses, 1)
+    self.assertIsInstance(total_loss, tf.Tensor)
     self.assertEqual(total_loss.numpy(), 1.)
     self.assertLen(loss_container.metrics, 1)
 
@@ -89,6 +90,7 @@ class LossesContainerTest(keras_parameterized.TestCase):
     total_loss = loss_container(y_t, y_p, sample_weight=sw)
 
     self.assertLen(loss_container._losses, 2)
+    self.assertIsInstance(total_loss, tf.Tensor)
     self.assertEqual(total_loss.numpy(), 0.25)
     self.assertLen(loss_container.metrics, 3)
 
@@ -142,6 +144,7 @@ class LossesContainerTest(keras_parameterized.TestCase):
 
     total_loss = loss_container(y_t, y_p, sample_weight=sw)
 
+    self.assertIsInstance(total_loss, tf.Tensor)
     self.assertEqual(total_loss.numpy(), 0.5)
     self.assertLen(loss_container.metrics, 2)
 
@@ -176,6 +179,7 @@ class LossesContainerTest(keras_parameterized.TestCase):
     sw = tf.convert_to_tensor([0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
 
     total_loss = loss_container(y_t, y_p, sample_weight=sw)
+    self.assertIsInstance(total_loss, tf.Tensor)
     self.assertEqual(total_loss.numpy(), 0.75)
     self.assertLen(loss_container.metrics, 3)
 
@@ -292,6 +296,7 @@ class LossesContainerTest(keras_parameterized.TestCase):
 
     loss_container = compile_utils.LossesContainer(my_mae)
     total_loss = loss_container(y_t, y_p)
+    self.assertIsInstance(total_loss, tf.Tensor)
     self.assertEqual(total_loss.dtype, tf.float64)
 
   def test_loss_masking(self):
@@ -384,8 +389,9 @@ class LossesContainerTest(keras_parameterized.TestCase):
         tf.RaggedTensor.from_row_splits(v_t, [0, 2, 3]), 0)
     y_p = tf.expand_dims(
         tf.RaggedTensor.from_row_splits(v_p, [0, 2, 3]), 0)
-    loss_container(y_t, y_p)
+    total_loss = loss_container(y_t, y_p)
 
+    self.assertIsInstance(total_loss, tf.Tensor)
     self.assertEqual(loss_container._losses[0].name, 'custom_loss_fn')
 
 
@@ -792,6 +798,23 @@ class MetricsContainerTest(keras_parameterized.TestCase):
     metric_container = compile_utils.MetricsContainer(metric)
     metric_container.reset_state()
     self.assertEqual(metric.result().numpy(), 0.0)
+
+  def test_duplicated_metric_instance(self):
+    mean_obj = metrics_mod.Mean()
+    metric = mean_obj
+    with self.assertRaisesRegex(ValueError, 'Found duplicated metrics'):
+      compile_utils.MetricsContainer(metrics=metric, weighted_metrics=metric)
+
+    # duplicated string should be fine
+    metric = 'acc'
+    compile_utils.MetricsContainer(metrics=metric, weighted_metrics=metric)
+
+    # complicated structure
+    metric = [mean_obj, 'acc']
+    weighted_metric = {'output1': mean_obj, 'output2': 'acc'}
+    with self.assertRaisesRegex(ValueError, 'Found duplicated metrics'):
+      compile_utils.MetricsContainer(
+          metrics=metric, weighted_metrics=weighted_metric)
 
 
 if __name__ == '__main__':

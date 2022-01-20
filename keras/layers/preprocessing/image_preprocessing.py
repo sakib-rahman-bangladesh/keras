@@ -20,6 +20,7 @@
 from keras import backend
 from keras.engine import base_layer
 from keras.engine import base_preprocessing_layer
+from keras.layers.preprocessing import preprocessing_utils as utils
 from keras.preprocessing.image import smart_resize
 from keras.utils import control_flow_util
 import numpy as np
@@ -60,6 +61,8 @@ class Resizing(base_layer.Layer):
 
   This layer resizes an image input to a target height and width. The input
   should be a 4D (batched) or 3D (unbatched) tensor in `"channels_last"` format.
+  Input pixel values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and of
+  interger or floating point dtype. By default, the layer will output floats.
 
   For an overview and full list of preprocessing layers, see the preprocessing
   [guide](https://www.tensorflow.org/guide/keras/preprocessing_layers).
@@ -93,6 +96,14 @@ class Resizing(base_layer.Layer):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('Resizing').set(True)
 
   def call(self, inputs):
+    # tf.image.resize will always output float32 and operate more efficiently on
+    # float32 unless interpolation is nearest, in which case ouput type matches
+    # input type.
+    if self.interpolation == 'nearest':
+      input_dtype = self.compute_dtype
+    else:
+      input_dtype = tf.float32
+    inputs = utils.ensure_tensor(inputs, dtype=input_dtype)
     if self.crop_to_aspect_ratio:
       outputs = smart_resize(
           inputs,
@@ -103,6 +114,7 @@ class Resizing(base_layer.Layer):
           inputs,
           size=[self.height, self.width],
           method=self._interpolation_method)
+    outputs = tf.cast(outputs, self.compute_dtype)
     return outputs
 
   def compute_output_shape(self, input_shape):
@@ -132,6 +144,9 @@ class CenterCrop(base_layer.Layer):
   return the largest possible window in the image that matches the target aspect
   ratio.
 
+  Input pixel values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and
+  of interger or floating point dtype. By default, the layer will output floats.
+
   For an overview and full list of preprocessing layers, see the preprocessing
   [guide](https://www.tensorflow.org/guide/keras/preprocessing_layers).
 
@@ -158,7 +173,7 @@ class CenterCrop(base_layer.Layer):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('CenterCrop').set(True)
 
   def call(self, inputs):
-    inputs = tf.convert_to_tensor(inputs)
+    inputs = utils.ensure_tensor(inputs, self.compute_dtype)
     input_shape = tf.shape(inputs)
     h_diff = input_shape[H_AXIS] - self.height
     w_diff = input_shape[W_AXIS] - self.width
@@ -169,10 +184,13 @@ class CenterCrop(base_layer.Layer):
       return tf.image.crop_to_bounding_box(inputs, h_start, w_start,
                                            self.height, self.width)
 
-    outputs = tf.cond(
-        tf.reduce_all((h_diff >= 0, w_diff >= 0)), center_crop,
-        lambda: smart_resize(inputs, [self.height, self.width]))
-    return tf.cast(outputs, inputs.dtype)
+    def upsize():
+      outputs = smart_resize(inputs, [self.height, self.width])
+      # smart_resize will always output float32, so we need to re-cast.
+      return tf.cast(outputs, self.compute_dtype)
+
+    return tf.cond(
+        tf.reduce_all((h_diff >= 0, w_diff >= 0)), center_crop, upsize)
 
   def compute_output_shape(self, input_shape):
     input_shape = tf.TensorShape(input_shape).as_list()
@@ -191,7 +209,7 @@ class CenterCrop(base_layer.Layer):
 
 @keras_export('keras.layers.RandomCrop',
               'keras.layers.experimental.preprocessing.RandomCrop')
-class RandomCrop(base_layer.Layer):
+class RandomCrop(base_layer.BaseRandomLayer):
   """A preprocessing layer which randomly crops images during training.
 
   During training, this layer will randomly choose a location to crop images
@@ -203,6 +221,9 @@ class RandomCrop(base_layer.Layer):
   possible window in the image that matches the target aspect ratio. If you need
   to apply random cropping at inference time, set `training` to True when
   calling the layer.
+
+  Input pixel values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and
+  of interger or floating point dtype. By default, the layer will output floats.
 
   For an overview and full list of preprocessing layers, see the preprocessing
   [guide](https://www.tensorflow.org/guide/keras/preprocessing_layers).
@@ -223,16 +244,16 @@ class RandomCrop(base_layer.Layer):
 
   def __init__(self, height, width, seed=None, **kwargs):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('RandomCrop').set(True)
-    super(RandomCrop, self).__init__(**kwargs, autocast=False)
+    super(RandomCrop, self).__init__(**kwargs, autocast=False, seed=seed,
+                                     force_generator=True)
     self.height = height
     self.width = width
     self.seed = seed
-    self._random_generator = backend.RandomGenerator(seed, force_generator=True)
 
   def call(self, inputs, training=True):
     if training is None:
       training = backend.learning_phase()
-    inputs = tf.convert_to_tensor(inputs)
+    inputs = utils.ensure_tensor(inputs, dtype=self.compute_dtype)
     input_shape = tf.shape(inputs)
     h_diff = input_shape[H_AXIS] - self.height
     w_diff = input_shape[W_AXIS] - self.width
@@ -245,10 +266,14 @@ class RandomCrop(base_layer.Layer):
       return tf.image.crop_to_bounding_box(inputs, h_start, w_start,
                                            self.height, self.width)
 
-    outputs = tf.cond(
+    def resize():
+      outputs = smart_resize(inputs, [self.height, self.width])
+      # smart_resize will always output float32, so we need to re-cast.
+      return tf.cast(outputs, self.compute_dtype)
+
+    return tf.cond(
         tf.reduce_all((training, h_diff >= 0, w_diff >= 0)), random_crop,
-        lambda: smart_resize(inputs, [self.height, self.width]))
-    return tf.cast(outputs, inputs.dtype)
+        resize)
 
   def compute_output_shape(self, input_shape):
     input_shape = tf.TensorShape(input_shape).as_list()
@@ -276,13 +301,15 @@ class Rescaling(base_layer.Layer):
 
   For instance:
 
-  1. To rescale an input in the `[0, 255]` range
+  1. To rescale an input in the ``[0, 255]`` range
   to be in the `[0, 1]` range, you would pass `scale=1./255`.
 
-  2. To rescale an input in the `[0, 255]` range to be in the `[-1, 1]` range,
+  2. To rescale an input in the ``[0, 255]`` range to be in the `[-1, 1]` range,
   you would pass `scale=1./127.5, offset=-1`.
 
-  The rescaling is applied both during training and inference.
+  The rescaling is applied both during training and inference. Inputs can be
+  of integer or floating point dtype, and by default the layer will output
+  floats.
 
   For an overview and full list of preprocessing layers, see the preprocessing
   [guide](https://www.tensorflow.org/guide/keras/preprocessing_layers).
@@ -305,7 +332,7 @@ class Rescaling(base_layer.Layer):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('Rescaling').set(True)
 
   def call(self, inputs):
-    dtype = self._compute_dtype
+    dtype = self.compute_dtype
     scale = tf.cast(self.scale, dtype)
     offset = tf.cast(self.offset, dtype)
     return tf.cast(inputs, dtype) * scale + offset
@@ -329,12 +356,15 @@ HORIZONTAL_AND_VERTICAL = 'horizontal_and_vertical'
 
 @keras_export('keras.layers.RandomFlip',
               'keras.layers.experimental.preprocessing.RandomFlip')
-class RandomFlip(base_layer.Layer):
+class RandomFlip(base_layer.BaseRandomLayer):
   """A preprocessing layer which randomly flips images during training.
 
   This layer will flip the images horizontally and or vertically based on the
   `mode` attribute. During inference time, the output will be identical to
   input. Call the layer with `training=True` to flip the input.
+
+  Input pixel values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and
+  of interger or floating point dtype. By default, the layer will output floats.
 
   For an overview and full list of preprocessing layers, see the preprocessing
   [guide](https://www.tensorflow.org/guide/keras/preprocessing_layers).
@@ -359,7 +389,7 @@ class RandomFlip(base_layer.Layer):
                mode=HORIZONTAL_AND_VERTICAL,
                seed=None,
                **kwargs):
-    super(RandomFlip, self).__init__(**kwargs)
+    super(RandomFlip, self).__init__(seed=seed, force_generator=True, **kwargs)
     base_preprocessing_layer.keras_kpl_gauge.get_cell('RandomFlip').set(True)
     self.mode = mode
     if mode == HORIZONTAL:
@@ -375,11 +405,11 @@ class RandomFlip(base_layer.Layer):
       raise ValueError('RandomFlip layer {name} received an unknown mode '
                        'argument {arg}'.format(name=self.name, arg=mode))
     self.seed = seed
-    self._random_generator = backend.RandomGenerator(seed, force_generator=True)
 
   def call(self, inputs, training=True):
     if training is None:
       training = backend.learning_phase()
+    inputs = utils.ensure_tensor(inputs, self.compute_dtype)
 
     def random_flipped_inputs():
       flipped_outputs = inputs
@@ -421,11 +451,14 @@ class RandomFlip(base_layer.Layer):
 # TODO(tanzheny): Add examples, here and everywhere.
 @keras_export('keras.layers.RandomTranslation',
               'keras.layers.experimental.preprocessing.RandomTranslation')
-class RandomTranslation(base_layer.Layer):
+class RandomTranslation(base_layer.BaseRandomLayer):
   """A preprocessing layer which randomly translates images during training.
 
   This layer will apply random translations to each image during training,
   filling empty space according to `fill_mode`.
+
+  Input pixel values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and
+  of interger or floating point dtype. By default, the layer will output floats.
 
   For an overview and full list of preprocessing layers, see the preprocessing
   [guide](https://www.tensorflow.org/guide/keras/preprocessing_layers).
@@ -483,7 +516,8 @@ class RandomTranslation(base_layer.Layer):
                **kwargs):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('RandomTranslation').set(
         True)
-    super(RandomTranslation, self).__init__(**kwargs)
+    super(RandomTranslation, self).__init__(seed=seed, force_generator=True,
+                                            **kwargs)
     self.height_factor = height_factor
     if isinstance(height_factor, (tuple, list)):
       self.height_lower = height_factor[0]
@@ -518,13 +552,12 @@ class RandomTranslation(base_layer.Layer):
     self.fill_value = fill_value
     self.interpolation = interpolation
     self.seed = seed
-    self._random_generator = backend.RandomGenerator(seed, force_generator=True)
 
   def call(self, inputs, training=True):
     if training is None:
       training = backend.learning_phase()
 
-    inputs = tf.convert_to_tensor(inputs)
+    inputs = utils.ensure_tensor(inputs, self.compute_dtype)
     original_shape = inputs.shape
     unbatched = inputs.shape.rank == 3
     # The transform op only accepts rank 4 inputs, so if we have an unbatched
@@ -748,7 +781,7 @@ def get_rotation_matrix(angles, image_height, image_width, name=None):
 
 @keras_export('keras.layers.RandomRotation',
               'keras.layers.experimental.preprocessing.RandomRotation')
-class RandomRotation(base_layer.Layer):
+class RandomRotation(base_layer.BaseRandomLayer):
   """A preprocessing layer which randomly rotates images during training.
 
   This layer will apply random rotations to each image, filling empty space
@@ -757,6 +790,9 @@ class RandomRotation(base_layer.Layer):
   By default, random rotations are only applied during training.
   At inference time, the layer does nothing. If you need to apply random
   rotations at inference time, set `training` to True when calling the layer.
+
+  Input pixel values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and
+  of interger or floating point dtype. By default, the layer will output floats.
 
   For an overview and full list of preprocessing layers, see the preprocessing
   [guide](https://www.tensorflow.org/guide/keras/preprocessing_layers).
@@ -804,7 +840,8 @@ class RandomRotation(base_layer.Layer):
                **kwargs):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('RandomRotation').set(
         True)
-    super(RandomRotation, self).__init__(**kwargs)
+    super(RandomRotation, self).__init__(seed=seed, force_generator=True,
+                                         **kwargs)
     self.factor = factor
     if isinstance(factor, (tuple, list)):
       self.lower = factor[0]
@@ -820,13 +857,12 @@ class RandomRotation(base_layer.Layer):
     self.fill_value = fill_value
     self.interpolation = interpolation
     self.seed = seed
-    self._random_generator = backend.RandomGenerator(seed, force_generator=True)
 
   def call(self, inputs, training=True):
     if training is None:
       training = backend.learning_phase()
 
-    inputs = tf.convert_to_tensor(inputs)
+    inputs = utils.ensure_tensor(inputs, self.compute_dtype)
     original_shape = inputs.shape
     unbatched = inputs.shape.rank == 3
     # The transform op only accepts rank 4 inputs, so if we have an unbatched
@@ -875,11 +911,14 @@ class RandomRotation(base_layer.Layer):
 
 @keras_export('keras.layers.RandomZoom',
               'keras.layers.experimental.preprocessing.RandomZoom')
-class RandomZoom(base_layer.Layer):
+class RandomZoom(base_layer.BaseRandomLayer):
   """A preprocessing layer which randomly zooms images during training.
 
   This layer will randomly zoom in or out on each axis of an image
   independently, filling empty space according to `fill_mode`.
+
+  Input pixel values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and
+  of interger or floating point dtype. By default, the layer will output floats.
 
   For an overview and full list of preprocessing layers, see the preprocessing
   [guide](https://www.tensorflow.org/guide/keras/preprocessing_layers).
@@ -942,7 +981,7 @@ class RandomZoom(base_layer.Layer):
                fill_value=0.0,
                **kwargs):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('RandomZoom').set(True)
-    super(RandomZoom, self).__init__(**kwargs)
+    super(RandomZoom, self).__init__(seed=seed, force_generator=True, **kwargs)
     self.height_factor = height_factor
     if isinstance(height_factor, (tuple, list)):
       self.height_lower = height_factor[0]
@@ -974,13 +1013,12 @@ class RandomZoom(base_layer.Layer):
     self.fill_value = fill_value
     self.interpolation = interpolation
     self.seed = seed
-    self._random_generator = backend.RandomGenerator(seed, force_generator=True)
 
   def call(self, inputs, training=True):
     if training is None:
       training = backend.learning_phase()
 
-    inputs = tf.convert_to_tensor(inputs)
+    inputs = utils.ensure_tensor(inputs, self.compute_dtype)
     original_shape = inputs.shape
     unbatched = inputs.shape.rank == 3
     # The transform op only accepts rank 4 inputs, so if we have an unbatched
@@ -1082,7 +1120,7 @@ def get_zoom_matrix(zooms, image_height, image_width, name=None):
 
 @keras_export('keras.layers.RandomContrast',
               'keras.layers.experimental.preprocessing.RandomContrast')
-class RandomContrast(base_layer.Layer):
+class RandomContrast(base_layer.BaseRandomLayer):
   """A preprocessing layer which randomly adjusts contrast during training.
 
   This layer will randomly adjust the contrast of an image or images by a random
@@ -1092,6 +1130,9 @@ class RandomContrast(base_layer.Layer):
   For each channel, this layer computes the mean of the image pixels in the
   channel and then adjusts each component `x` of each pixel to
   `(x - mean) * contrast_factor + mean`.
+
+  Input pixel values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and
+  of interger or floating point dtype. By default, the layer will output floats.
 
   For an overview and full list of preprocessing layers, see the preprocessing
   [guide](https://www.tensorflow.org/guide/keras/preprocessing_layers).
@@ -1115,7 +1156,8 @@ class RandomContrast(base_layer.Layer):
   def __init__(self, factor, seed=None, **kwargs):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('RandomContrast').set(
         True)
-    super(RandomContrast, self).__init__(**kwargs)
+    super(RandomContrast, self).__init__(seed=seed, force_generator=True,
+                                         **kwargs)
     self.factor = factor
     if isinstance(factor, (tuple, list)):
       self.lower = factor[0]
@@ -1126,12 +1168,12 @@ class RandomContrast(base_layer.Layer):
       raise ValueError('Factor cannot have negative values or greater than 1.0,'
                        ' got {}'.format(factor))
     self.seed = seed
-    self._random_generator = backend.RandomGenerator(seed, force_generator=True)
 
   def call(self, inputs, training=True):
     if training is None:
       training = backend.learning_phase()
 
+    inputs = utils.ensure_tensor(inputs, self.compute_dtype)
     def random_contrasted_inputs():
       seed = self._random_generator.make_seed_for_stateless_op()
       if seed is not None:
@@ -1161,12 +1203,15 @@ class RandomContrast(base_layer.Layer):
 
 @keras_export('keras.layers.RandomHeight',
               'keras.layers.experimental.preprocessing.RandomHeight')
-class RandomHeight(base_layer.Layer):
+class RandomHeight(base_layer.BaseRandomLayer):
   """A preprocessing layer which randomly varies image height during training.
 
   This layer adjusts the height of a batch of images by a random factor.
   The input should be a 3D (unbatched) or 4D (batched) tensor in the
-  `"channels_last"` image data format.
+  `"channels_last"` image data format. Input pixel values can be of any range
+  (e.g. `[0., 1.)` or `[0, 255]`) and of interger or floating point dtype. By
+  default, the layer will output floats.
+
 
   By default, this layer is inactive during inference.
 
@@ -1202,7 +1247,8 @@ class RandomHeight(base_layer.Layer):
                seed=None,
                **kwargs):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('RandomHeight').set(True)
-    super(RandomHeight, self).__init__(**kwargs)
+    super(RandomHeight, self).__init__(seed=seed, force_generator=True,
+                                       **kwargs)
     self.factor = factor
     if isinstance(factor, (tuple, list)):
       self.height_lower = factor[0]
@@ -1220,11 +1266,12 @@ class RandomHeight(base_layer.Layer):
     self.interpolation = interpolation
     self._interpolation_method = get_interpolation(interpolation)
     self.seed = seed
-    self._random_generator = backend.RandomGenerator(seed, force_generator=True)
 
   def call(self, inputs, training=True):
     if training is None:
       training = backend.learning_phase()
+
+    inputs = utils.ensure_tensor(inputs)
 
     def random_height_inputs():
       """Inputs height-adjusted with random ops."""
@@ -1239,13 +1286,16 @@ class RandomHeight(base_layer.Layer):
       adjusted_size = tf.stack([adjusted_height, img_wd])
       output = tf.image.resize(
           images=inputs, size=adjusted_size, method=self._interpolation_method)
+      # tf.resize will output float32 in many cases regardless of input type.
+      output = tf.cast(output, self.compute_dtype)
       output_shape = inputs.shape.as_list()
       output_shape[H_AXIS] = None
       output.set_shape(output_shape)
       return output
 
-    return control_flow_util.smart_cond(training, random_height_inputs,
-                                        lambda: inputs)
+    return control_flow_util.smart_cond(
+        training, random_height_inputs,
+        lambda: tf.cast(inputs, self.compute_dtype))
 
   def compute_output_shape(self, input_shape):
     input_shape = tf.TensorShape(input_shape).as_list()
@@ -1264,12 +1314,14 @@ class RandomHeight(base_layer.Layer):
 
 @keras_export('keras.layers.RandomWidth',
               'keras.layers.experimental.preprocessing.RandomWidth')
-class RandomWidth(base_layer.Layer):
+class RandomWidth(base_layer.BaseRandomLayer):
   """A preprocessing layer which randomly varies image width during training.
 
   This layer will randomly adjusts the width of a batch of images of a
   batch of images by a random factor. The input should be a 3D (unbatched) or
-  4D (batched) tensor in the `"channels_last"` image data format.
+  4D (batched) tensor in the `"channels_last"` image data format. Input pixel
+  values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and of interger or
+  floating point dtype. By default, the layer will output floats.
 
   By default, this layer is inactive during inference.
 
@@ -1305,7 +1357,7 @@ class RandomWidth(base_layer.Layer):
                seed=None,
                **kwargs):
     base_preprocessing_layer.keras_kpl_gauge.get_cell('RandomWidth').set(True)
-    super(RandomWidth, self).__init__(**kwargs)
+    super(RandomWidth, self).__init__(seed=seed, force_generator=True, **kwargs)
     self.factor = factor
     if isinstance(factor, (tuple, list)):
       self.width_lower = factor[0]
@@ -1322,11 +1374,12 @@ class RandomWidth(base_layer.Layer):
     self.interpolation = interpolation
     self._interpolation_method = get_interpolation(interpolation)
     self.seed = seed
-    self._random_generator = backend.RandomGenerator(seed, force_generator=True)
 
   def call(self, inputs, training=True):
     if training is None:
       training = backend.learning_phase()
+
+    inputs = utils.ensure_tensor(inputs)
 
     def random_width_inputs():
       """Inputs width-adjusted with random ops."""
@@ -1341,13 +1394,16 @@ class RandomWidth(base_layer.Layer):
       adjusted_size = tf.stack([img_hd, adjusted_width])
       output = tf.image.resize(
           images=inputs, size=adjusted_size, method=self._interpolation_method)
+      # tf.resize will output float32 in many cases regardless of input type.
+      output = tf.cast(output, self.compute_dtype)
       output_shape = inputs.shape.as_list()
       output_shape[W_AXIS] = None
       output.set_shape(output_shape)
       return output
 
-    return control_flow_util.smart_cond(training, random_width_inputs,
-                                        lambda: inputs)
+    return control_flow_util.smart_cond(
+        training, random_width_inputs,
+        lambda: tf.cast(inputs, self.compute_dtype))
 
   def compute_output_shape(self, input_shape):
     input_shape = tf.TensorShape(input_shape).as_list()

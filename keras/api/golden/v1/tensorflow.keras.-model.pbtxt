@@ -3,7 +3,7 @@ tf_class {
   is_instance: "<class \'keras.engine.training.Model\'>"
   is_instance: "<class \'keras.engine.base_layer.Layer\'>"
   is_instance: "<class \'tensorflow.python.module.module.Module\'>"
-  is_instance: "<class \'tensorflow.python.training.tracking.tracking.AutoTrackable\'>"
+  is_instance: "<class \'tensorflow.python.training.tracking.autotrackable.AutoTrackable\'>"
   is_instance: "<class \'tensorflow.python.training.tracking.base.Trackable\'>"
   is_instance: "<class \'keras.utils.version_utils.LayerVersionSelector\'>"
   is_instance: "<class \'keras.utils.version_utils.ModelVersionSelector\'>"
@@ -186,11 +186,19 @@ tf_class {
   }
   member_method {
     name: "compile"
-    argspec: "args=[\'self\', \'optimizer\', \'loss\', \'metrics\', \'loss_weights\', \'weighted_metrics\', \'run_eagerly\', \'steps_per_execution\'], varargs=None, keywords=kwargs, defaults=[\'rmsprop\', \'None\', \'None\', \'None\', \'None\', \'None\', \'None\'], "
+    argspec: "args=[\'self\', \'optimizer\', \'loss\', \'metrics\', \'loss_weights\', \'weighted_metrics\', \'run_eagerly\', \'steps_per_execution\', \'jit_compile\'], varargs=None, keywords=kwargs, defaults=[\'rmsprop\', \'None\', \'None\', \'None\', \'None\', \'None\', \'None\', \'None\'], "
+  }
+  member_method {
+    name: "compute_loss"
+    argspec: "args=[\'self\', \'x\', \'y\', \'y_pred\', \'sample_weight\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\', \'None\'], "
   }
   member_method {
     name: "compute_mask"
     argspec: "args=[\'self\', \'inputs\', \'mask\'], varargs=None, keywords=None, defaults=[\'None\'], "
+  }
+  member_method {
+    name: "compute_metrics"
+    argspec: "args=[\'self\', \'x\', \'y\', \'y_pred\', \'sample_weight\'], varargs=None, keywords=None, defaults=None"
   }
   member_method {
     name: "compute_output_shape"
@@ -206,7 +214,7 @@ tf_class {
   }
   member_method {
     name: "evaluate"
-    argspec: "args=[\'self\', \'x\', \'y\', \'batch_size\', \'verbose\', \'sample_weight\', \'steps\', \'callbacks\', \'max_queue_size\', \'workers\', \'use_multiprocessing\', \'return_dict\'], varargs=None, keywords=kwargs, defaults=[\'None\', \'None\', \'None\', \'1\', \'None\', \'None\', \'None\', \'10\', \'1\', \'False\', \'False\'], "
+    argspec: "args=[\'self\', \'x\', \'y\', \'batch_size\', \'verbose\', \'sample_weight\', \'steps\', \'callbacks\', \'max_queue_size\', \'workers\', \'use_multiprocessing\', \'return_dict\'], varargs=None, keywords=kwargs, defaults=[\'None\', \'None\', \'None\', \'auto\', \'None\', \'None\', \'None\', \'10\', \'1\', \'False\', \'False\'], "
   }
   member_method {
     name: "evaluate_generator"
@@ -290,7 +298,7 @@ tf_class {
   }
   member_method {
     name: "predict"
-    argspec: "args=[\'self\', \'x\', \'batch_size\', \'verbose\', \'steps\', \'callbacks\', \'max_queue_size\', \'workers\', \'use_multiprocessing\'], varargs=None, keywords=None, defaults=[\'None\', \'0\', \'None\', \'None\', \'10\', \'1\', \'False\'], "
+    argspec: "args=[\'self\', \'x\', \'batch_size\', \'verbose\', \'steps\', \'callbacks\', \'max_queue_size\', \'workers\', \'use_multiprocessing\'], varargs=None, keywords=None, defaults=[\'None\', \'auto\', \'None\', \'None\', \'10\', \'1\', \'False\'], "
   }
   member_method {
     name: "predict_generator"
@@ -330,7 +338,7 @@ tf_class {
   }
   member_method {
     name: "summary"
-    argspec: "args=[\'self\', \'line_length\', \'positions\', \'print_fn\', \'expand_nested\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\', \'False\'], "
+    argspec: "args=[\'self\', \'line_length\', \'positions\', \'print_fn\', \'expand_nested\', \'show_trainable\'], varargs=None, keywords=None, defaults=[\'None\', \'None\', \'None\', \'False\', \'False\'], "
   }
   member_method {
     name: "test_on_batch"

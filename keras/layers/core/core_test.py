@@ -13,17 +13,19 @@
 # limitations under the License.
 # ==============================================================================
 """Tests for Keras core layers."""
-# pylint: disable=g-bad-import-order
-import tensorflow.compat.v2 as tf
 
+import os
 import textwrap
 
 import keras
+from keras import initializers
 from keras import keras_parameterized
 from keras import testing_utils
 from keras.layers import core
 from keras.mixed_precision import policy
 import numpy as np
+
+import tensorflow.compat.v2 as tf
 
 
 @keras_parameterized.run_all_keras_modes
@@ -88,6 +90,44 @@ class DropoutLayersTest(keras_parameterized.TestCase):
     out_np = keras.backend.get_value(out)
     # Test that dropout mask is shared across second dim.
     self.assertAllClose(out_np[:, 0, :], out_np[:, 1, :])
+
+  def test_dropout_with_savemodel(self):
+    inputs = keras.Input(shape=(5, 10))
+    layer = keras.layers.Dropout(0.5)
+    layer._random_generator._force_generator = True
+    outputs = layer(inputs)
+    model = keras.Model(inputs, outputs)
+    train = model(np.ones((20, 5, 10)), training=True)
+    predict = model(np.ones((20, 5, 10)))
+    # Make sure the weights from tf.random.Generator is not present in the model
+    # which will cause weight loading issue for existing application models if
+    # it contains dropout layer.
+    self.assertEmpty(layer.get_weights())
+    self.assertEmpty(model.get_weights())
+
+    # Make sure the layer does dropout value when training
+    self.assertNotAllClose(train, predict)
+
+    model.save(os.path.join(self.get_temp_dir(), 'savedmodel'),
+               save_format='tf')
+    loaded_model = keras.models.load_model(
+        os.path.join(self.get_temp_dir(), 'savedmodel'))
+    predict2 = loaded_model(np.ones((20, 5, 10)))
+
+    self.assertAllClose(predict, predict2)
+    # Make sure the model dropout different value after loading
+    train2 = loaded_model(np.ones((20, 5, 10)), training=True)
+    self.assertNotAllClose(train, train2)
+    self.assertIsNotNone(loaded_model.layers[1]._random_generator)
+
+    # Also make sure the checkpoint doesn't contain any variable from the
+    # dropout layer, to keep the backward compatibility.
+    checkpoint = tf.train.Checkpoint(model)
+    save_path = checkpoint.save(os.path.join(self.get_temp_dir(), 'checkpoint'))
+    checkpoint_var_names = [name_value_tuple[0] for name_value_tuple in
+                            tf.train.list_variables(save_path)]
+    for name in checkpoint_var_names:
+      self.assertNotIn('dropout', name)
 
 
 @keras_parameterized.run_all_keras_modes
@@ -366,6 +406,34 @@ class TestStatefulLambda(keras_parameterized.TestCase):
       model = testing_utils.get_model_from_layers([layer], input_shape=(1,))
       model(tf.ones((4, 1)))
 
+  @keras_parameterized.run_all_keras_modes
+  @keras_parameterized.run_with_all_model_types
+  def test_lambda_skip_state_variable_from_initializer(self):
+    # Force the initializers to use the tf.random.Generator, which will contain
+    # the state variable.
+    kernel_initializer = initializers.RandomNormalV2()
+    kernel_initializer._random_generator._force_generator = True
+    dense = keras.layers.Dense(1, use_bias=False,
+                               kernel_initializer=kernel_initializer)
+
+    def lambda_fn(x):
+      return dense(x + 1)  # Dense layer is built on first call
+
+    # While it is generally not advised to mix Variables with Lambda layers, if
+    # the variables are explicitly set as attributes then they are still
+    # tracked. This is consistent with the base Layer behavior.
+    layer = keras.layers.Lambda(lambda_fn)
+    layer.dense = dense
+
+    model = testing_utils.get_model_from_layers([layer], input_shape=(10,))
+    model.compile(
+        keras.optimizer_v2.gradient_descent.SGD(0.1),
+        'mae',
+        run_eagerly=testing_utils.should_run_eagerly())
+    x, y = np.ones((10, 10), 'float32'), 2 * np.ones((10, 10), 'float32')
+    model.fit(x, y, batch_size=2, epochs=2, validation_data=(x, y))
+    self.assertLen(model.trainable_weights, 1)
+
 
 @keras_parameterized.run_all_keras_modes
 class CoreLayersTest(keras_parameterized.TestCase):
@@ -412,81 +480,6 @@ class CoreLayersTest(keras_parameterized.TestCase):
         keras.layers.Activation,
         kwargs={'activation': keras.backend.relu},
         input_shape=(3, 2))
-
-  def test_reshape(self):
-    testing_utils.layer_test(
-        keras.layers.Reshape,
-        kwargs={'target_shape': (8, 1)},
-        input_shape=(3, 2, 4))
-
-    testing_utils.layer_test(
-        keras.layers.Reshape,
-        kwargs={'target_shape': (-1, 1)},
-        input_shape=(3, 2, 4))
-
-    testing_utils.layer_test(
-        keras.layers.Reshape,
-        kwargs={'target_shape': (1, -1)},
-        input_shape=(3, 2, 4))
-
-    testing_utils.layer_test(
-        keras.layers.Reshape,
-        kwargs={'target_shape': (-1, 1)},
-        input_shape=(None, None, 2))
-
-  def test_reshape_set_static_shape(self):
-    input_layer = keras.Input(batch_shape=(1, None))
-    reshaped = keras.layers.Reshape((1, 100))(input_layer)
-    # Make sure the batch dim is not lost after array_ops.reshape.
-    self.assertEqual(reshaped.shape, [1, 1, 100])
-
-  def test_permute(self):
-    testing_utils.layer_test(
-        keras.layers.Permute, kwargs={'dims': (2, 1)}, input_shape=(3, 2, 4))
-
-  def test_permute_errors_on_invalid_starting_dims_index(self):
-    with self.assertRaisesRegex(ValueError, r'Invalid permutation .*dims.*'):
-      testing_utils.layer_test(
-          keras.layers.Permute,
-          kwargs={'dims': (0, 1, 2)},
-          input_shape=(3, 2, 4))
-
-  def test_permute_errors_on_invalid_set_of_dims_indices(self):
-    with self.assertRaisesRegex(ValueError, r'Invalid permutation .*dims.*'):
-      testing_utils.layer_test(
-          keras.layers.Permute,
-          kwargs={'dims': (1, 4, 2)},
-          input_shape=(3, 2, 4))
-
-  def test_flatten(self):
-    testing_utils.layer_test(
-        keras.layers.Flatten, kwargs={}, input_shape=(3, 2, 4))
-
-    # Test channels_first
-    inputs = np.random.random((10, 3, 5, 5)).astype('float32')
-    outputs = testing_utils.layer_test(
-        keras.layers.Flatten,
-        kwargs={'data_format': 'channels_first'},
-        input_data=inputs)
-    target_outputs = np.reshape(
-        np.transpose(inputs, (0, 2, 3, 1)), (-1, 5 * 5 * 3))
-    self.assertAllClose(outputs, target_outputs)
-
-  def test_flatten_scalar_channels(self):
-    testing_utils.layer_test(keras.layers.Flatten, kwargs={}, input_shape=(3,))
-
-    # Test channels_first
-    inputs = np.random.random((10,)).astype('float32')
-    outputs = testing_utils.layer_test(
-        keras.layers.Flatten,
-        kwargs={'data_format': 'channels_first'},
-        input_data=inputs)
-    target_outputs = np.expand_dims(inputs, -1)
-    self.assertAllClose(outputs, target_outputs)
-
-  def test_repeat_vector(self):
-    testing_utils.layer_test(
-        keras.layers.RepeatVector, kwargs={'n': 3}, input_shape=(3, 2))
 
   def test_dense(self):
     testing_utils.layer_test(
@@ -579,6 +572,58 @@ class CoreLayersTest(keras_parameterized.TestCase):
     self.assertEqual(layer.kernel.constraint, k_constraint)
     self.assertEqual(layer.bias.constraint, b_constraint)
 
+  def test_dense_layer_ragged_tensor(self):
+    layer = keras.layers.Dense(2, kernel_initializer='ones', use_bias=False)
+
+    # a.shape = [2, None, 2]; a.ragged_rank=1
+    a = tf.ragged.constant([[[1., 2], [3, 4], [5, 6]], [[7, 8]]],
+                           ragged_rank=1)
+    a_out = layer(a)
+    keras.backend.get_value(layer.kernel)  # ensures var is built in TF 1.x.
+    self.assertAllEqual(a_out, [[[3., 3], [7, 7], [11, 11]], [[15, 15]]])
+
+    # b.shape = [4, 2]; b.ragged_rank=1
+    b = tf.RaggedTensor.from_uniform_row_length([1., 2, 3, 4, 5, 6, 7, 8], 2)
+    self.assertAllEqual(layer(b), [[3., 3], [7, 7], [11, 11], [15, 15]])
+
+    # c.shape = [2, 2, 2]; c.ragged_rank=2
+    c = tf.RaggedTensor.from_uniform_row_length(b, 2)
+    self.assertAllEqual(layer(c), [[[3., 3], [7, 7]], [[11, 11], [15, 15]]])
+
+  def test_dense_layer_ragged_tensor_savedmodel(self):
+    # Check that we don't get a deadlock when saving a Keras model with
+    # a dense layer that processes RaggedTensors.  (This happened because
+    # Dense.call() had a recursive call, which is not currently supported
+    # by the @tf.function decorator.)
+
+    class TestModel(keras.Model):
+
+      def __init__(self):
+        super().__init__()
+        self._layer = keras.layers.Dense(1, kernel_initializer='ones',
+                                         use_bias=False)
+
+      def call(self, inputs):
+        return self._layer(inputs)
+
+    model = TestModel()
+    result = model(tf.RaggedTensor.from_row_lengths([[1.], [2], [3]], [1, 2]))
+    keras.backend.get_value(model._layer.kernel)  # required in TF 1.x.
+    self.assertAllClose(result, [[[1.0]], [[2.0], [3.0]]])
+    model.save(os.path.join(self.get_temp_dir(), 'savedmodel'),
+               save_format='tf')
+
+  def test_dense_layer_unsupported_ragged_tensor_error(self):
+    layer = keras.layers.Dense(2)
+    with self.assertRaisesRegex(
+        ValueError, 'The last dimension of the inputs to a Dense layer should '
+        r'be defined. Found None. Full input shape received: .*'):
+      layer(tf.ragged.constant([[1., 2], [3, 4, 5]]))
+    with self.assertRaisesRegex(
+        ValueError, 'Dense layer only supports RaggedTensors when the '
+        r'innermost dimension is non-ragged. Received: inputs.shape=.*'):
+      layer.call(tf.ragged.constant([[1., 2], [3, 4, 5]]))
+
   def test_activity_regularization(self):
     layer = keras.layers.ActivityRegularization(l1=0.1)
     layer(keras.backend.variable(np.ones((2, 4))))
@@ -588,10 +633,6 @@ class CoreLayersTest(keras_parameterized.TestCase):
 
   def test_numpy_inputs(self):
     if tf.executing_eagerly():
-      layer = keras.layers.RepeatVector(2)
-      x = np.ones((10, 10))
-      self.assertAllEqual(np.ones((10, 2, 10)), layer(x))
-
       layer = keras.layers.Concatenate()
       x, y = np.ones((10, 10)), np.ones((10, 10))
       self.assertAllEqual(np.ones((10, 20)), layer([x, y]))

@@ -72,15 +72,43 @@ class Functional(training_lib.Model):
 
   Example:
 
-  ```
+  ```python
   inputs = keras.Input(shape=(10,))
   x = keras.layers.Dense(1)(inputs)
   outputs = tf.nn.relu(x)
   model = keras.Model(inputs, outputs)
   ```
 
+  A new `Functional` model can also be created by using the
+  intermediate tensors. This enables you to quickly extract sub-components
+  of the model.
+
+  Example:
+
+  ```python
+  inputs = keras.Input(shape=(None, None, 3))
+  processed = keras.layers.RandomCrop(width=32, height=32)(inputs)
+  conv = keras.layers.Conv2D(filters=2, kernel_size=3)(processed)
+  pooling = keras.layers.GlobalAveragePooling2D()(conv)
+  feature = keras.layers.Dense(10)(pooling)
+
+  full_model = keras.Model(inputs, feature)
+  backbone = keras.Model(processed, conv)
+  activations = keras.Model(conv, feature)
+  ```
+
+  Note that the `backbone` and `activations` models are not
+  created with `keras.Input` objects, but with the tensors that are originated
+  from `keras.Inputs` objects. Under the hood, the layers and weights will
+  be shared across these models, so that user can train the `full_model`, and
+  use `backbone` or `activations` to do feature extraction.
+  The inputs and outputs of the model can be nested structures of tensors as
+  well, and the created models are standard `Functional` model that support
+  all the existing API.
+
   Args:
-    inputs: List of input tensors (must be created via `tf.keras.Input()`).
+    inputs: List of input tensors (must be created via `tf.keras.Input()` or
+      originated from `tf.keras.Input()`).
     outputs: List of output tensors.
     name: String, optional. Name of the model.
     trainable: Boolean, optional. If the model's variables should be trainable.
@@ -366,12 +394,10 @@ class Functional(training_lib.Model):
       dependencies['layer-%d' % layer_index] = layer
     return dependencies
 
-  @property
-  def _checkpoint_dependencies(self):
-    dependencies = [
-        tf.__internal__.tracking.TrackableReference(name=name, ref=layer)
-        for name, layer in self._layer_checkpoint_dependencies.items()]
-    dependencies.extend(super(Functional, self)._checkpoint_dependencies)
+  def _trackable_children(self, save_type='checkpoint', **kwargs):
+    dependencies = self._layer_checkpoint_dependencies
+    dependencies.update(
+        super(Functional, self)._trackable_children(save_type, **kwargs))
     return dependencies
 
   def _lookup_dependency(self, name):
@@ -687,7 +713,7 @@ class Functional(training_lib.Model):
         return model
       # The config does not contain all the information necessary to revive a
       # Functional model. This happens when the user creates subclassed models
-      # with a Functional constructor and has overriden the `get_config` method
+      # with a Functional constructor and has overridden the `get_config` method
       # to return a completely new dictionary.
       try:
         return cls(**config)
@@ -741,7 +767,7 @@ class Functional(training_lib.Model):
         for x in self.inputs])
     input_batch_sizes.discard(None)
     if len(input_batch_sizes) > 1:
-      logging.warning('Found incompatiable static batch sizes among the '
+      logging.warning('Found incompatible static batch sizes among the '
                       f'inputs. Batch sizes: {sorted(input_batch_sizes)}')
 
     for x in self.outputs:

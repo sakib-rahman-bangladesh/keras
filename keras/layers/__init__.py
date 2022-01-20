@@ -40,10 +40,10 @@ from keras.layers.preprocessing.image_preprocessing import Resizing
 from keras.layers.preprocessing.image_preprocessing import Rescaling
 
 # Preprocessing layers.
-from keras.layers.preprocessing.category_crossing import CategoryCrossing
 from keras.layers.preprocessing.category_encoding import CategoryEncoding
 from keras.layers.preprocessing.discretization import Discretization
 from keras.layers.preprocessing.hashing import Hashing
+from keras.layers.preprocessing.hashed_crossing import HashedCrossing
 from keras.layers.preprocessing.integer_lookup import IntegerLookup
 from keras.layers.preprocessing.normalization import Normalization
 from keras.layers.preprocessing.string_lookup import StringLookup
@@ -58,48 +58,49 @@ from keras.layers.advanced_activations import ThresholdedReLU
 from keras.layers.advanced_activations import Softmax
 
 # Convolution layers.
-from keras.layers.convolutional import Conv1D
-from keras.layers.convolutional import Conv2D
-from keras.layers.convolutional import Conv3D
-from keras.layers.convolutional import Conv1DTranspose
-from keras.layers.convolutional import Conv2DTranspose
-from keras.layers.convolutional import Conv3DTranspose
-from keras.layers.convolutional import SeparableConv1D
-from keras.layers.convolutional import SeparableConv2D
+from keras.layers.convolutional.conv1d import Conv1D
+from keras.layers.convolutional.conv2d import Conv2D
+from keras.layers.convolutional.conv3d import Conv3D
+from keras.layers.convolutional.conv1d_transpose import Conv1DTranspose
+from keras.layers.convolutional.conv2d_transpose import Conv2DTranspose
+from keras.layers.convolutional.conv3d_transpose import Conv3DTranspose
+from keras.layers.convolutional.depthwise_conv1d import DepthwiseConv1D
+from keras.layers.convolutional.depthwise_conv2d import DepthwiseConv2D
+from keras.layers.convolutional.separable_conv1d import SeparableConv1D
+from keras.layers.convolutional.separable_conv2d import SeparableConv2D
 
 # Convolution layer aliases.
-from keras.layers.convolutional import Convolution1D
-from keras.layers.convolutional import Convolution2D
-from keras.layers.convolutional import Convolution3D
-from keras.layers.convolutional import Convolution2DTranspose
-from keras.layers.convolutional import Convolution3DTranspose
-from keras.layers.convolutional import SeparableConvolution1D
-from keras.layers.convolutional import SeparableConvolution2D
-from keras.layers.convolutional import DepthwiseConv1D
-from keras.layers.convolutional import DepthwiseConv2D
+from keras.layers.convolutional.conv1d import Convolution1D
+from keras.layers.convolutional.conv2d import Convolution2D
+from keras.layers.convolutional.conv3d import Convolution3D
+from keras.layers.convolutional.conv1d_transpose import Convolution1DTranspose
+from keras.layers.convolutional.conv2d_transpose import Convolution2DTranspose
+from keras.layers.convolutional.conv3d_transpose import Convolution3DTranspose
+from keras.layers.convolutional.separable_conv1d import SeparableConvolution1D
+from keras.layers.convolutional.separable_conv2d import SeparableConvolution2D
 
-# Image processing layers.
-from keras.layers.convolutional import UpSampling1D
-from keras.layers.convolutional import UpSampling2D
-from keras.layers.convolutional import UpSampling3D
-from keras.layers.convolutional import ZeroPadding1D
-from keras.layers.convolutional import ZeroPadding2D
-from keras.layers.convolutional import ZeroPadding3D
-from keras.layers.convolutional import Cropping1D
-from keras.layers.convolutional import Cropping2D
-from keras.layers.convolutional import Cropping3D
+# Reshaping layers.
+from keras.layers.reshaping.cropping1d import Cropping1D
+from keras.layers.reshaping.cropping2d import Cropping2D
+from keras.layers.reshaping.cropping3d import Cropping3D
+from keras.layers.reshaping.flatten import Flatten
+from keras.layers.reshaping.permute import Permute
+from keras.layers.reshaping.repeat_vector import RepeatVector
+from keras.layers.reshaping.reshape import Reshape
+from keras.layers.reshaping.up_sampling1d import UpSampling1D
+from keras.layers.reshaping.up_sampling2d import UpSampling2D
+from keras.layers.reshaping.up_sampling3d import UpSampling3D
+from keras.layers.reshaping.zero_padding1d import ZeroPadding1D
+from keras.layers.reshaping.zero_padding2d import ZeroPadding2D
+from keras.layers.reshaping.zero_padding3d import ZeroPadding3D
 
 # Core layers.
 from keras.layers.core.activation import Activation
 from keras.layers.core.activity_regularization import ActivityRegularization
 from keras.layers.core.dense import Dense
 from keras.layers.core.dropout import Dropout
-from keras.layers.core.flatten import Flatten
 from keras.layers.core.lambda_layer import Lambda
 from keras.layers.core.masking import Masking
-from keras.layers.core.permute import Permute
-from keras.layers.core.repeat_vector import RepeatVector
-from keras.layers.core.reshape import Reshape
 from keras.layers.core.spatial_dropout import SpatialDropout1D
 from keras.layers.core.spatial_dropout import SpatialDropout2D
 from keras.layers.core.spatial_dropout import SpatialDropout3D
@@ -152,6 +153,7 @@ from keras.layers.noise import GaussianDropout
 # Normalization layers.
 from keras.layers.normalization.layer_normalization import LayerNormalization
 from keras.layers.normalization.batch_normalization import SyncBatchNormalization
+from keras.layers.normalization.unit_normalization import UnitNormalization
 
 if tf.__internal__.tf2.enabled():
   from keras.layers.normalization.batch_normalization import BatchNormalization
@@ -250,7 +252,9 @@ from keras.layers.rnn_cell_wrapper_v2 import ResidualWrapper
 # Serialization functions.
 from keras.layers import serialization
 from keras.layers.serialization import deserialize
+from keras.layers.serialization import deserialize_from_json
 from keras.layers.serialization import serialize
+from keras.layers.serialization import get_builtin_layer
 
 
 class VersionAwareLayers:

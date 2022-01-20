@@ -284,9 +284,12 @@ def clear_session():
   graph = get_graph()
   with graph.as_default():
     _DUMMY_EAGER_GRAPH.learning_phase_is_set = False
-    _GRAPH_LEARNING_PHASES.clear()
-    # Create the learning phase placeholder in graph using the default factory.
-    _GRAPH_LEARNING_PHASES.setdefault(graph)
+
+    _GRAPH_LEARNING_PHASES = {}
+    # Create the learning phase placeholder in graph using the default factory
+    phase = _default_learning_phase()
+    _internal_set_learning_phase(graph, phase)
+
     _GRAPH_VARIABLES.pop(graph, None)
     _GRAPH_TF_OPTIMIZERS.pop(graph, None)
   if tf.executing_eagerly():
@@ -342,7 +345,14 @@ def learning_phase():
       # This is because functions & defuns (both in graph & in eager mode)
       # will always execute non-eagerly using a function-specific default
       # subgraph.
-      learning_phase = _GRAPH_LEARNING_PHASES[None]
+      if context.executing_eagerly():
+        if _DUMMY_EAGER_GRAPH.key not in _GRAPH_LEARNING_PHASES:
+          phase = _default_learning_phase()
+          _internal_set_learning_phase(_DUMMY_EAGER_GRAPH.key, phase)
+          _DUMMY_EAGER_GRAPH.learning_phase_is_set = True
+        return _internal_get_learning_phase(_DUMMY_EAGER_GRAPH.key)
+      else:
+        learning_phase = symbolic_learning_phase()
   _mark_func_graph_as_unsaveable(graph, learning_phase)
   return learning_phase
 
@@ -373,11 +383,37 @@ def _mark_func_graph_as_unsaveable(graph, learning_phase):
 def symbolic_learning_phase():
   graph = get_graph()
   with graph.as_default():
-    return _GRAPH_LEARNING_PHASES[graph]
+    if graph not in _GRAPH_LEARNING_PHASES:
+      phase = _default_learning_phase()
+      _internal_set_learning_phase(graph, phase)
+
+    return _internal_get_learning_phase(graph)
+
+
+def _internal_set_learning_phase(graph, value):
+  global _GRAPH_LEARNING_PHASES  # pylint: disable=global-variable-not-assigned
+
+  if isinstance(value, tf.Tensor):
+    # The 'value' here is a tf.Tensor with attribute 'graph'.
+    # There is a circular reference between key 'graph' and attribute 'graph'.
+    # So we need use a weakref.ref to refer to the 'value' tensor here.
+    # Otherwise, it would lead to memory leak.
+    value_ref = weakref.ref(value)
+    _GRAPH_LEARNING_PHASES[graph] = value_ref
+  else:
+    _GRAPH_LEARNING_PHASES[graph] = value
+
+
+def _internal_get_learning_phase(graph):
+  phase = _GRAPH_LEARNING_PHASES.get(graph, None)
+  if isinstance(phase, weakref.ref):
+    return phase()
+  else:
+    return phase
 
 
 def _default_learning_phase():
-  if tf.executing_eagerly():
+  if context.executing_eagerly():
     return 0
   else:
     with name_scope(''):
@@ -439,7 +475,6 @@ def deprecated_internal_set_learning_phase(value):
   Raises:
       ValueError: if `value` is neither `0` nor `1`.
   """
-  global _GRAPH_LEARNING_PHASES  # pylint: disable=global-variable-not-assigned
   if value not in {0, 1}:
     raise ValueError('Expected learning phase to be 0 or 1.')
   with tf.init_scope():
@@ -447,8 +482,9 @@ def deprecated_internal_set_learning_phase(value):
       # In an eager context, the learning phase values applies to both the eager
       # context and the internal Keras graph.
       _DUMMY_EAGER_GRAPH.learning_phase_is_set = True
-      _GRAPH_LEARNING_PHASES[_DUMMY_EAGER_GRAPH.key] = value
-    _GRAPH_LEARNING_PHASES[get_graph()] = value
+      _internal_set_learning_phase(_DUMMY_EAGER_GRAPH.key, value)
+
+    _internal_set_learning_phase(get_graph(), value)
 
 
 @keras_export('keras.backend.learning_phase_scope')
@@ -510,9 +546,9 @@ def deprecated_internal_learning_phase_scope(value):
 
   with tf.init_scope():
     if tf.executing_eagerly():
-      previous_eager_value = _GRAPH_LEARNING_PHASES.get(
-          _DUMMY_EAGER_GRAPH.key, None)
-    previous_graph_value = _GRAPH_LEARNING_PHASES.get(get_graph(), None)
+      previous_eager_value = _internal_get_learning_phase(
+          _DUMMY_EAGER_GRAPH.key)
+    previous_graph_value = _internal_get_learning_phase(get_graph())
 
   learning_phase_previously_set = _DUMMY_EAGER_GRAPH.learning_phase_is_set
   try:
@@ -525,13 +561,14 @@ def deprecated_internal_learning_phase_scope(value):
     with tf.init_scope():
       if tf.executing_eagerly():
         if previous_eager_value is not None:
-          _GRAPH_LEARNING_PHASES[_DUMMY_EAGER_GRAPH.key] = previous_eager_value
+          _internal_set_learning_phase(_DUMMY_EAGER_GRAPH.key,
+                                       previous_eager_value)
         elif _DUMMY_EAGER_GRAPH.key in _GRAPH_LEARNING_PHASES:
           del _GRAPH_LEARNING_PHASES[_DUMMY_EAGER_GRAPH.key]
 
       graph = get_graph()
       if previous_graph_value is not None:
-        _GRAPH_LEARNING_PHASES[graph] = previous_graph_value
+        _internal_set_learning_phase(graph, previous_graph_value)
       elif graph in _GRAPH_LEARNING_PHASES:
         del _GRAPH_LEARNING_PHASES[graph]
 
@@ -557,12 +594,12 @@ def eager_learning_phase_scope(value):
   if global_learning_phase_was_set:
     previous_value = learning_phase()
   try:
-    _GRAPH_LEARNING_PHASES[_DUMMY_EAGER_GRAPH.key] = value
+    _internal_set_learning_phase(_DUMMY_EAGER_GRAPH.key, value)
     yield
   finally:
     # Restore learning phase to initial value or unset.
     if global_learning_phase_was_set:
-      _GRAPH_LEARNING_PHASES[_DUMMY_EAGER_GRAPH.key] = previous_value
+      _internal_set_learning_phase(_DUMMY_EAGER_GRAPH.key, previous_value)
     else:
       del _GRAPH_LEARNING_PHASES[_DUMMY_EAGER_GRAPH.key]
 
@@ -1719,22 +1756,71 @@ def identity(x, name=None):
 # tf.random.uniform.
 _USE_GENERATOR_FOR_RNG = False
 
+# The global generator to create the seed when initializing the
+# tf.random.Genrator used by RandomGenerator. When tf.random.Generator becomes
+# the default solution, we would like the it to be initialized in a controlable
+# way, so that each client of the program could start with same seed. This is
+# very important for certain use case that requires all the client to have their
+# state in sync. This instance will be set when user call
+# `tf.keras.util.set_random_seed()`
+_SEED_GENERATOR = threading.local()
 
-def use_generator_for_rng():
+
+@keras_export('keras.backend.experimental.is_tf_random_generator_enabled',
+              v1=[])
+def is_tf_random_generator_enabled():
+  """Check whether `tf.random.Generator` is used for RNG in Keras.
+
+  Compared to existing TF stateful random ops, `tf.random.Generator` uses
+  `tf.Variable` and stateless random ops to generate random numbers,
+  which leads to better reproducibility in distributed training.
+  Note enabling it might introduce some breakage to existing code,
+  by producing differently-seeded random number sequences
+  and breaking tests that rely on specific random numbers being generated.
+  To disable the
+  usage of `tf.random.Generator`, please use
+  `tf.keras.backend.experimental.disable_random_generator`.
+
+  We expect the `tf.random.Generator` code path to become the default, and will
+  remove the legacy stateful random ops such as `tf.random.uniform` in the
+  future (see the
+  [TF RNG guide](https://www.tensorflow.org/guide/random_numbers)).
+
+  This API will also be removed in a future release as well, together with
+  `tf.keras.backend.experimental.enable_tf_random_generator()` and
+  `tf.keras.backend.experimental.disable_tf_random_generator()`
+
+  Returns:
+    boolean: whether `tf.random.Generator` is used for random number generation
+      in Keras.
+  """
   return _USE_GENERATOR_FOR_RNG
 
 
-def enabled_generator_for_rng():
+@keras_export('keras.backend.experimental.enable_tf_random_generator', v1=[])
+def enable_tf_random_generator():
+  """Enable the `tf.random.Generator` as the RNG for Keras.
+
+  See `tf.keras.backend.experimental.is_tf_random_generator_enabled` for more
+  details.
+  """
+
   global _USE_GENERATOR_FOR_RNG
   _USE_GENERATOR_FOR_RNG = True
 
 
-def disable_generator_for_rng():
+@keras_export('keras.backend.experimental.disable_tf_random_generator', v1=[])
+def disable_tf_random_generator():
+  """Disable the `tf.random.Generator` as the RNG for Keras.
+
+  See `tf.keras.backend.experimental.is_tf_random_generator_enabled` for more
+  details.
+  """
   global _USE_GENERATOR_FOR_RNG
   _USE_GENERATOR_FOR_RNG = False
 
 
-class RandomGenerator:
+class RandomGenerator(tf.__internal__.tracking.AutoTrackable):
   """Random generator that selects appropriate random ops.
 
   This class contains the logic for legacy stateful random ops, as well as the
@@ -1762,7 +1848,7 @@ class RandomGenerator:
       return
 
     if (tf.compat.v1.executing_eagerly_outside_functions() and
-        (use_generator_for_rng() or self._force_generator)):
+        (is_tf_random_generator_enabled() or self._force_generator)):
       # In the case of V2, we use tf.random.Generator to create all the random
       # numbers and seeds.
       from keras.utils import tf_utils  # pylint: disable=g-import-not-at-top
@@ -1770,8 +1856,11 @@ class RandomGenerator:
         if self._seed is not None:
           self._generator = tf.random.Generator.from_seed(self._seed)
         else:
-          self._generator = tf.random.Generator.from_seed(
-              random.randint(1, 1e9))
+          if getattr(_SEED_GENERATOR, 'generator', None):
+            seed = _SEED_GENERATOR.generator.randint(1, 1e9)
+          else:
+            seed = random.randint(1, 1e9)
+          self._generator = tf.random.Generator.from_seed(seed)
     else:
       # In the v1 case, we use stateful op, regardless whether user provide a
       # seed or not. Seeded stateful op will ensure generating same sequences.
@@ -2058,7 +2147,7 @@ def moving_average_update(x, value, momentum):
   if tf.__internal__.tf2.enabled():
     momentum = tf.cast(momentum, x.dtype)
     value = tf.cast(value, x.dtype)
-    return x.assign(x * momentum + value * (1 - momentum))
+    return x.assign_sub((x - value) * (1 - momentum))
   else:
     return tf.__internal__.train.assign_moving_average(
         x, value, momentum, zero_debias=True)
@@ -5175,6 +5264,107 @@ def binary_crossentropy(target, output, from_logits=False):
   return -bce
 
 
+@keras_export('keras.backend.binary_focal_crossentropy')
+@tf.__internal__.dispatch.add_dispatch_support
+@doc_controls.do_not_generate_docs
+def binary_focal_crossentropy(
+    target,
+    output,
+    gamma=2.0,
+    from_logits=False,
+):
+  """Binary focal crossentropy between an output tensor and a target tensor.
+
+  According to [Lin et al., 2018](https://arxiv.org/pdf/1708.02002.pdf), it
+  helps to apply a focal factor to down-weight easy examples and focus more on
+  hard examples. By default, the focal tensor is computed as follows:
+
+  `focal_factor = (1 - output)**gamma` for class 1
+  `focal_factor = output**gamma` for class 0
+  where `gamma` is a focusing parameter. When `gamma` = 0, this function is
+  equivalent to the binary crossentropy.
+
+  Args:
+    target: A tensor with the same shape as `output`.
+    output: A tensor.
+    gamma: A focusing parameter used to compute the focal factor, default is 2.0
+      as mentioned in reference.
+    from_logits: Whether `output` is expected to be a logits tensor. By default,
+      we consider that `output` encodes a probability distribution.
+
+  Returns:
+    A tensor.
+  """
+  sigmoidal = tf.__internal__.smart_cond.smart_cond(
+      from_logits,
+      lambda: sigmoid(output),
+      lambda: output,
+  )
+  p_t = (target * sigmoidal) + ((1 - target) * (1 - sigmoidal))
+  # Calculate focal factor
+  focal_factor = tf.pow(1.0 - p_t, gamma)
+  # Binary crossentropy
+  bce = binary_crossentropy(
+      target=target,
+      output=output,
+      from_logits=from_logits,
+  )
+  return focal_factor * bce
+
+
+@keras_export('keras.backend.binary_weighted_focal_crossentropy')
+@tf.__internal__.dispatch.add_dispatch_support
+@doc_controls.do_not_generate_docs
+def binary_weighted_focal_crossentropy(
+    target,
+    output,
+    alpha=0.25,
+    gamma=2.0,
+    from_logits=False,
+):
+  """Binary weighted focal crossentropy between an output tensor and a target.
+
+  According to [Lin et al., 2018](https://arxiv.org/pdf/1708.02002.pdf), it
+  helps to apply a focal factor to down-weight easy examples and focus more on
+  hard examples. By default, the focal tensor is computed as follows:
+
+  `focal_factor = (1 - output)**gamma` for class 1
+  `focal_factor = output**gamma` for class 0
+  where `gamma` is a focusing parameter. When `gamma` = 0, there is no focal
+  effect on the binary crossentropy.
+
+  This function also takes into account a weight balancing factor for the binary
+  classes 0 and 1 as follows:
+
+  `weight = alpha` for class 1 (`target` = 1)
+  `weight = 1 - alpha` for class 0
+  where `alpha` is a float in the range of [0, 1].
+
+  Args:
+    target: A tensor with the same shape as `output`.
+    output: A tensor.
+    alpha: A weight balancing factor for class 1, default is 0.25 as mentioned
+    in reference. The weight for class 0 is 1.0 - `alpha`.
+    gamma: A focusing parameter, default is 2.0 as mentioned in reference.
+    from_logits: Whether `output` is expected to be a logits tensor. By default,
+      we consider that `output` encodes a probability distribution.
+
+  Returns:
+    A tensor.
+  """
+  # Balancing weight for the binary classes
+  weight = target * alpha + (1 - target) * (1 - alpha)
+
+  # Binary focal crossentropy
+  bfce = binary_focal_crossentropy(
+      target=target,
+      output=output,
+      gamma=gamma,
+      from_logits=from_logits,
+  )
+  return weight * bfce
+
+
 @keras_export('keras.backend.sigmoid')
 @tf.__internal__.dispatch.add_dispatch_support
 @doc_controls.do_not_generate_docs
@@ -5531,7 +5721,12 @@ def conv2d_transpose(x,
                                          padding=padding,
                                          data_format=tf_data_format)
   else:
-    assert dilation_rate[0] == dilation_rate[1]
+    if dilation_rate[0] != dilation_rate[1]:
+      raise ValueError(
+          'Expected the 2 dimensions of the `dilation_rate` argument '
+          'to be equal to each other. '
+          f'Received: dilation_rate={dilation_rate}'
+      )
     x = tf.nn.atrous_conv2d_transpose(
         x,
         kernel,
@@ -6776,7 +6971,8 @@ class ContextValueCache(weakref.WeakKeyDictionary):
 # dummy object is used.
 # A learning phase is a bool tensor used to run Keras models in
 # either train mode (learning_phase == 1) or test mode (learning_phase == 0).
-_GRAPH_LEARNING_PHASES = ContextValueCache(_default_learning_phase)
+_GRAPH_LEARNING_PHASES = ContextValueCache(
+    object_identity.ObjectIdentityWeakSet)
 
 # This dictionary holds a mapping between a graph and variables to initialize
 # in the graph.

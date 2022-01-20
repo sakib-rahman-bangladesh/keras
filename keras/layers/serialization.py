@@ -15,8 +15,7 @@
 """Layer serialization/deserialization functions."""
 
 import tensorflow.compat.v2 as tf
-# pylint: disable=wildcard-import
-# pylint: disable=unused-import
+# pylint: disable=g-bad-import-order,g-direct-tensorflow-import,unused-import,wildcard-import
 
 import threading
 from keras.engine import base_layer
@@ -37,20 +36,23 @@ from keras.layers import noise
 from keras.layers import pooling
 from keras.layers import recurrent
 from keras.layers import recurrent_v2
+from keras.layers import reshaping
 from keras.layers import rnn_cell_wrapper_v2
 from keras.layers import wrappers
 from keras.layers.normalization import batch_normalization
 from keras.layers.normalization import batch_normalization_v1
 from keras.layers.normalization import layer_normalization
-from keras.layers.preprocessing import category_crossing
+from keras.layers.normalization import unit_normalization
 from keras.layers.preprocessing import category_encoding
 from keras.layers.preprocessing import discretization
 from keras.layers.preprocessing import hashing
+from keras.layers.preprocessing import hashed_crossing
 from keras.layers.preprocessing import image_preprocessing
 from keras.layers.preprocessing import integer_lookup
 from keras.layers.preprocessing import normalization as preprocessing_normalization
 from keras.layers.preprocessing import string_lookup
 from keras.layers.preprocessing import text_vectorization
+from keras.saving.saved_model import json_utils
 from keras.utils import generic_utils
 from keras.utils import tf_inspect as inspect
 from tensorflow.python.util.tf_export import keras_export
@@ -58,9 +60,9 @@ from tensorflow.python.util.tf_export import keras_export
 ALL_MODULES = (base_layer, input_layer, advanced_activations, convolutional,
                convolutional_recurrent, core, cudnn_recurrent, dense_attention,
                embeddings, einsum_dense, local, merge, noise,
-               batch_normalization_v1, layer_normalization, pooling,
-               image_preprocessing, recurrent, wrappers, hashing,
-               category_crossing, category_encoding, discretization,
+               batch_normalization_v1, layer_normalization, unit_normalization,
+               pooling, image_preprocessing, recurrent, reshaping, wrappers,
+               hashing, hashed_crossing, category_encoding, discretization,
                multi_head_attention, integer_lookup,
                preprocessing_normalization, string_lookup, text_vectorization)
 ALL_V2_MODULES = (rnn_cell_wrapper_v2, batch_normalization, layer_normalization,
@@ -209,3 +211,20 @@ def deserialize(config, custom_objects=None):
       module_objects=LOCAL.ALL_OBJECTS,
       custom_objects=custom_objects,
       printable_module_name='layer')
+
+
+def get_builtin_layer(class_name):
+  """Returns class if `class_name` is registered, else returns None."""
+  if not hasattr(LOCAL, 'ALL_OBJECTS'):
+    populate_deserializable_objects()
+  return LOCAL.ALL_OBJECTS.get(class_name)
+
+
+def deserialize_from_json(json_string, custom_objects=None):
+  """Instantiates a layer from a JSON string."""
+  populate_deserializable_objects()
+  config = json_utils.decode_and_deserialize(
+      json_string,
+      module_objects=LOCAL.ALL_OBJECTS,
+      custom_objects=custom_objects)
+  return deserialize(config, custom_objects)

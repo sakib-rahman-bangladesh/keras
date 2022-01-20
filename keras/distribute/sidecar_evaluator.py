@@ -17,10 +17,12 @@
 
 import tensorflow.compat.v2 as tf
 from tensorflow.python.platform import tf_logging as logging
+from tensorflow.python.util import deprecation  # pylint: disable=g-direct-tensorflow-import
 from tensorflow.python.util.tf_export import keras_export  # pylint: disable=g-direct-tensorflow-import
 
 _PRINT_EVAL_STEP_EVERY_SEC = 60.0
 _ITERATIONS_UNINITIALIZED = -1
+_CHECKPOINT_TIMEOUT_SEC = 30
 
 
 def list_checkpoint_attributes(ckpt_dir_or_file):
@@ -43,7 +45,7 @@ def list_checkpoint_attributes(ckpt_dir_or_file):
   return {name.split('/')[0] for name in variable_map.keys()}
 
 
-@keras_export('keras.experimental.SidecarEvaluator', v1=[])
+@keras_export('keras.utils.SidecarEvaluator', v1=[])
 class SidecarEvaluator:
   """A class designed for a dedicated evaluator task.
 
@@ -77,7 +79,7 @@ class SidecarEvaluator:
       name="eval_metrics"))
   data = tf.data.Dataset.from_tensor_slices(...)
 
-  tf.keras.experimental.SidecarEvaluator(
+  tf.keras.SidecarEvaluator(
       model=model,
       data=data,
       checkpoint_dir='/tmp/checkpoint_dir',  # dir for training-saved checkpoint
@@ -173,13 +175,27 @@ class SidecarEvaluator:
     self.steps = steps
     self.callbacks = callbacks or []
 
+  def _timeout_fn(self):
+    logging.info(
+        f'No checkpoints appear to be found after {_CHECKPOINT_TIMEOUT_SEC} '
+        'seconds. Please check if you are properly using a '
+        '`tf.train.Checkpoint/CheckpointManager` or '
+        '`tf.keras.callbacks.ModelCheckpoint(save_weights_only=True)` to save '
+        'checkpoints by the training. See '
+        '`tf.keras.SidecarEvaluator` doc for recommended flows '
+        'of saving checkpoints.')
+    return False
+
   def start(self):
     """Starts the evaluation loop."""
     optimizer_checkpoint = tf.train.Checkpoint(iter=self._iterations)
     checkpoint = tf.train.Checkpoint(
         model=self.model, optimizer=optimizer_checkpoint)
 
-    for latest_checkpoint in tf.train.checkpoints_iterator(self.checkpoint_dir):
+    for latest_checkpoint in tf.train.checkpoints_iterator(
+        self.checkpoint_dir,
+        timeout=_CHECKPOINT_TIMEOUT_SEC,
+        timeout_fn=self._timeout_fn):
       try:
         # `expect_partial` because the checkpoint can have other `Trackable`s
         # such as `optimizer`.
@@ -239,7 +255,25 @@ class SidecarEvaluator:
           ]))
 
       if (self.max_evaluations and
-          (self.max_evaluations == int(latest_checkpoint.split('-')[-1]))):
+          (self.max_evaluations <= int(latest_checkpoint.split('-')[-1]))):
         # Exit the loop because we have evaluated the final checkpoint file.
         logging.info('Last checkpoint evaluated. SidecarEvaluator stops.')
         return
+
+
+@keras_export('keras.experimental.SidecarEvaluator', v1=[])
+@deprecation.deprecated_endpoints('keras.experimental.SidecarEvaluator')
+class SidecarEvaluatorExperimental(SidecarEvaluator):
+  """Deprecated. Please use `tf.keras.utils.SidecarEvaluator` instead.
+
+  Caution: `tf.keras.experimental.SidecarEvaluator` endpoint is
+    deprecated and will be removed in a future release. Please use
+    `tf.keras.utils.SidecarEvaluator`.
+  """
+
+  def __init__(self, *args, **kwargs):
+    logging.warning(
+        '`tf.keras.experimental.SidecarEvaluator` endpoint is '
+        'deprecated and will be removed in a future release. Please use '
+        '`tf.keras.utils.SidecarEvaluator`.')
+    super(SidecarEvaluatorExperimental, self).__init__(*args, **kwargs)

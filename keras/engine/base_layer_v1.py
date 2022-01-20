@@ -413,7 +413,7 @@ class Layer(base_layer.Layer):
         return autocast_variable.create_autocast_variable(variable)
       # Also the caching_device does not work with the mixed precision API,
       # disable it if it is specified.
-      # TODO(b/142020079): Reenable it once the bug is fixed.
+      # TODO(b/142020079): Re-enable it once the bug is fixed.
       if caching_device is not None:
         tf_logging.warning(
             '`caching_device` does not work with mixed precision API. Ignoring '
@@ -1576,8 +1576,10 @@ class Layer(base_layer.Layer):
         RuntimeError: if called in Eager mode.
     """
     if not self._inbound_nodes:
-      raise AttributeError('The layer has never been called '
-                           'and thus has no defined input shape.')
+      raise AttributeError(f'The layer "{self.name}" has never been called '
+                           'and thus has no defined input shape. Note that the '
+                           '`input_shape` property is only available for '
+                           'Functional and Sequential models.')
     all_input_shapes = set(
         [str(node.input_shapes) for node in self._inbound_nodes])
     if len(all_input_shapes) == 1:
@@ -2337,13 +2339,17 @@ class Layer(base_layer.Layer):
   def _tracking_metadata(self):
     return self._trackable_saved_model_saver.tracking_metadata
 
-  def _list_extra_dependencies_for_serialization(self, serialization_cache):
-    return (self._trackable_saved_model_saver
-            .list_extra_dependencies_for_serialization(serialization_cache))
-
-  def _list_functions_for_serialization(self, serialization_cache):
-    return (self._trackable_saved_model_saver
-            .list_functions_for_serialization(serialization_cache))
+  def _trackable_children(self, save_type='checkpoint', **kwargs):
+    if save_type == 'savedmodel':
+      cache = kwargs['cache']
+      # TODO(b/213628533): This must be called before super() to ensure
+      # that any input shape changes are applied before getting the config of
+      # the model.
+      children = self._trackable_saved_model_saver.trackable_children(cache)
+    else:
+      children = {}
+    children.update(super()._trackable_children(save_type, **kwargs))
+    return children
 
   def __getstate__(self):
     # Override to support `copy.deepcopy` and pickling.

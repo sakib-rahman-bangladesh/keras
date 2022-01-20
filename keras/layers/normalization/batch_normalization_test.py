@@ -152,7 +152,6 @@ class BatchNormalizationTest(keras_parameterized.TestCase):
   def test_batchnorm_mixed_precision(self):
     norm = keras.layers.BatchNormalization(
         axis=-1,
-        input_shape=(4, 4, 3),
         momentum=0.8,
         dtype='mixed_float16')
     x = np.random.normal(size=(10, 4, 4, 3))
@@ -160,6 +159,10 @@ class BatchNormalizationTest(keras_parameterized.TestCase):
     self.assertEqual(y.dtype, 'float16')
     self.assertEqual(norm.beta.dtype.base_dtype, 'float32')
     self.assertEqual(norm.gamma.dtype.base_dtype, 'float32')
+
+    x = np.arange(10 * 4 * 4 * 3).reshape((10, 4, 4, 3))
+    y = norm(x)
+    self.assertEqual(y.dtype, 'float16')
 
   @combinations.generate(combinations.combine(mode=['graph', 'eager'],
                                               fused=[True, False]))
@@ -369,6 +372,33 @@ class BatchNormalizationV2Test(keras_parameterized.TestCase):
     norm = batch_normalization.BatchNormalization(virtual_batch_size=8)
     inp = keras.layers.Input(shape=(None, None, 3))
     _ = norm(inp)
+
+  @combinations.generate(combinations.combine(mode=['eager']))
+  def test_fused_batchnorm_empty_batch(self):
+    # Test case for https://github.com/tensorflow/tensorflow/issues/52986
+    # create a simple strategy with the enable_partial_batch_handling flag
+    # turned on, to trigger the empty batch code path in fused batchnorm
+    strategy = tf.distribute.OneDeviceStrategy('/cpu:0')
+    strategy.extended.enable_partial_batch_handling = True
+    with strategy.scope():
+      layer = batch_normalization.BatchNormalization()
+
+    def fn():
+      with tf.GradientTape() as tape:
+        x = tf.ones((0, 2, 2, 2))
+        layer(x, training=True)
+      return tape
+
+    tape = strategy.run(fn)
+
+    self.assertTrue(layer.fused)
+
+    self.assertIsNotNone(layer.moving_mean)
+    self.assertIsNotNone(layer.moving_variance)
+
+    tape_vars = tape.watched_variables()
+    self.assertAllEqual(layer.gamma, tape_vars[0])
+    self.assertAllEqual(layer.beta, tape_vars[1])
 
 
 def _run_batchnorm_correctness_test(layer, dtype='float32', fused=False):

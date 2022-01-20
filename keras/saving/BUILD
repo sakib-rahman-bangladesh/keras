@@ -6,19 +6,10 @@ load("@org_keras//keras:keras.bzl", "tf_py_test")
 package(
     # TODO(scottzhu): Remove non-keras deps from TF.
     default_visibility = [
-        "//keras:__subpackages__",
+        "//keras:friends",
         "//third_party/tensorflow/python/distribute:__pkg__",
     ],
     licenses = ["notice"],
-)
-
-filegroup(
-    name = "all_py_srcs",
-    srcs = glob([
-        "*.py",
-        "**/*.py",
-    ]),
-    visibility = ["//keras/google/private_tf_api_test:__pkg__"],
 )
 
 py_library(
@@ -105,6 +96,7 @@ tf_py_test(
     shard_count = 4,
     tags = [
         "no_oss_py35",  # b/147011479
+        "no_pip",  # TODO(b/202022379)
         "no_windows",
     ],
     deps = [
@@ -122,6 +114,9 @@ tf_py_test(
     srcs = ["save_test.py"],
     python_version = "PY3",
     shard_count = 4,
+    tags = [
+        "no_pip",  # TODO(b/202022379)
+    ],
     deps = [
         "//:expect_absl_installed",
         "//:expect_numpy_installed",

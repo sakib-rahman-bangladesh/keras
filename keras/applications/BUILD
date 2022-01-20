@@ -6,15 +6,9 @@ load("@org_keras//keras:keras.bzl", "tf_py_test")
 package(
     default_visibility = [
         # Remove this deps to integration test.
-        "//keras:__subpackages__",
+        "//keras:friends",
     ],
     licenses = ["notice"],
-)
-
-filegroup(
-    name = "all_py_srcs",
-    srcs = glob(["*.py"]),
-    visibility = ["//keras/google/private_tf_api_test:__pkg__"],
 )
 
 py_library(
@@ -23,6 +17,7 @@ py_library(
         "__init__.py",
         "densenet.py",
         "efficientnet.py",
+        "efficientnet_v2.py",
         "imagenet_utils.py",
         "inception_resnet_v2.py",
         "inception_v3.py",
@@ -30,6 +25,7 @@ py_library(
         "mobilenet_v2.py",
         "mobilenet_v3.py",
         "nasnet.py",
+        "regnet.py",
         "resnet.py",
         "resnet_v2.py",
         "vgg16.py",
@@ -55,7 +51,7 @@ tf_py_test(
     name = "applications_test",
     size = "medium",
     srcs = ["applications_test.py"],
-    shard_count = 36,
+    shard_count = 40,
     tags = [
         "no_rocm",
         "notsan",  # b/168814536
@@ -286,6 +282,43 @@ tf_py_test(
     args = ["--module=efficientnet"],
     main = "applications_load_weight_test.py",
     shard_count = 8,
+    tags = [
+        "no_oss",
+        "no_pip",
+    ],
+    deps = [
+        ":applications",
+        "//:expect_absl_installed",
+        "//:expect_tensorflow_installed",
+        "//keras/preprocessing",
+    ],
+)
+
+tf_py_test(
+    name = "applications_load_weight_test_efficientnet_v2",
+    size = "large",
+    srcs = ["applications_load_weight_test.py"],
+    args = ["--module=efficientnet_v2"],
+    main = "applications_load_weight_test.py",
+    shard_count = 8,
+    tags = [
+        "no_oss",
+        "no_pip",
+    ],
+    deps = [
+        ":applications",
+        "//:expect_absl_installed",
+        "//:expect_tensorflow_installed",
+        "//keras/preprocessing",
+    ],
+)
+
+tf_py_test(
+    name = "applications_load_weight_test_regnet",
+    size = "large",
+    srcs = ["applications_load_weight_test.py"],
+    args = ["--module=regnet"],
+    main = "applications_load_weight_test.py",
     tags = [
         "no_oss",
         "no_pip",

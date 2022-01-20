@@ -105,7 +105,20 @@ class ModelToDotFormatTest(tf.test.TestCase, parameterized.TestCase):
     except ImportError:
       pass
 
-  def test_plot_model_cnn_with_activations(self):
+  @parameterized.parameters({
+      'show_shapes': False,
+      'show_dtype': False
+  }, {
+      'show_shapes': False,
+      'show_dtype': True
+  }, {
+      'show_shapes': True,
+      'show_dtype': False
+  }, {
+      'show_shapes': True,
+      'show_dtype': True
+  })
+  def test_plot_model_cnn_with_activations(self, show_shapes, show_dtype):
     model = keras.Sequential()
     model.add(
         keras.layers.Conv2D(
@@ -120,8 +133,8 @@ class ModelToDotFormatTest(tf.test.TestCase, parameterized.TestCase):
       vis_utils.plot_model(
           model,
           to_file=dot_img_file,
-          show_shapes=True,
-          show_dtype=True,
+          show_shapes=show_shapes,
+          show_dtype=show_dtype,
           show_layer_activations=True)
       self.assertTrue(tf.io.gfile.exists(dot_img_file))
       tf.io.gfile.remove(dot_img_file)
@@ -190,6 +203,18 @@ class ModelToDotFormatTest(tf.test.TestCase, parameterized.TestCase):
         vis_utils.model_to_dot(model, layer_range=layer_range)
       with self.assertRaises(ValueError):
         vis_utils.plot_model(model, layer_range=layer_range)
+    except ImportError:
+      pass
+
+  def test_model_with_tf_op(self):
+    # Test fix for a bug in which inputs to a TFOp layer past the 1st one
+    # were not connected in the Keras model plot.
+    a = keras.Input((2,))
+    b = keras.Input((2,))
+    model = keras.Model(inputs=[a, b], outputs=a + b)
+    try:
+      dot = vis_utils.model_to_dot(model)
+      self.assertLen(dot.get_edges(), 2)  # This model has 2 edges.
     except ImportError:
       pass
 

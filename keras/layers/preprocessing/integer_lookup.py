@@ -15,6 +15,7 @@
 """Keras string lookup preprocessing layer."""
 
 # pylint: disable=g-classes-have-attributes
+# pylint: disable=g-direct-tensorflow-import
 
 from keras.engine import base_preprocessing_layer
 from keras.layers.preprocessing import index_lookup
@@ -84,7 +85,15 @@ class IntegerLookup(index_lookup.IndexLookup):
       file. If passing an array, can pass a tuple, list, 1D numpy array, or 1D
       tensor containing the integer vocbulary terms. If passing a file path, the
       file should contain one line per term in the vocabulary. If this argument
-      is set, there is no need to `adapt` the layer.
+      is set, there is no need to `adapt()` the layer.
+    vocabulary_dtype: The dtype of the vocabulary terms, for example
+      `"int64"` or `"int32"`. Defaults to `"int64"`.
+    idf_weights: Only valid when `output_mode` is `"tf_idf"`. A tuple, list, 1D
+      numpy array, or 1D tensor or the same length as the vocabulary, containing
+      the floating point inverse document frequency weights, which will be
+      multiplied by per sample term counts for the final `tf_idf` weight. If the
+      `vocabulary` argument is set, and `output_mode` is `"tf_idf"`, this
+      argument must be supplied.
     invert: Only valid when `output_mode` is `"int"`. If True, this layer will
       map indices to vocabulary items instead of mapping vocabulary items to
       indices. Default to False.
@@ -233,8 +242,8 @@ class IntegerLookup(index_lookup.IndexLookup):
   >>> vocab = [12, 36, 1138, 42]
   >>> idf_weights = [0.25, 0.75, 0.6, 0.4]
   >>> data = tf.constant([[12, 1138, 42, 42], [42, 7, 36, 7]]) # Note OOV tokens
-  >>> layer = tf.keras.layers.IntegerLookup(output_mode='tf_idf')
-  >>> layer.set_vocabulary(vocab, idf_weights=idf_weights)
+  >>> layer = tf.keras.layers.IntegerLookup(
+  ...     output_mode='tf_idf', vocab, idf_weights=idf_weights)
   >>> layer(data)
   <tf.Tensor: shape=(2, 5), dtype=float32, numpy=
     array([[0.  , 0.25, 0.  , 0.6 , 0.8 ],
@@ -246,8 +255,8 @@ class IntegerLookup(index_lookup.IndexLookup):
   >>> vocab = [-1, 12, 36, 1138, 42]
   >>> idf_weights = [0.9, 0.25, 0.75, 0.6, 0.4]
   >>> data = tf.constant([[12, 1138, 42, 42], [42, 7, 36, 7]]) # Note OOV tokens
-  >>> layer = tf.keras.layers.IntegerLookup(output_mode='tf_idf')
-  >>> layer.set_vocabulary(vocab, idf_weights=idf_weights)
+  >>> layer = tf.keras.layers.IntegerLookup(
+  ...     output_mode='tf_idf', vocab, idf_weights=idf_weights)
   >>> layer(data)
   <tf.Tensor: shape=(2, 5), dtype=float32, numpy=
     array([[0.  , 0.25, 0.  , 0.6 , 0.8 ],
@@ -303,12 +312,23 @@ class IntegerLookup(index_lookup.IndexLookup):
                mask_token=None,
                oov_token=-1,
                vocabulary=None,
+               vocabulary_dtype="int64",
+               idf_weights=None,
                invert=False,
                output_mode="int",
                sparse=False,
                pad_to_max_tokens=False,
                **kwargs):
-    allowed_dtypes = [tf.int64]
+    if not tf.dtypes.as_dtype(vocabulary_dtype).is_integer:
+      raise ValueError("`vocabulary_dtype` must be an integer dtype. "
+                       f"Received: {vocabulary_dtype}")
+
+    # Legacy versions of the IntegerLookup layer set layer dtype to int64,
+    # instead of the output type. If we see this and output mode is not "int",
+    # clear the setting so we don't switch types for old SavedModels.
+    if output_mode != "int" and "dtype" in kwargs and (
+        kwargs["dtype"] == tf.int64 or kwargs["dtype"] == "int64"):
+      del kwargs["dtype"]
 
     # Support deprecated args for this layer.
     if "max_values" in kwargs:
@@ -328,13 +348,6 @@ class IntegerLookup(index_lookup.IndexLookup):
                           "oov_value is deprecated, use oov_token instead.", 1)
       oov_token = kwargs["oov_value"]
       del kwargs["oov_value"]
-
-    if "dtype" in kwargs and kwargs["dtype"] not in allowed_dtypes:
-      raise ValueError("The value of the dtype argument for IntegerLookup may "
-                       "only be one of %s." % (allowed_dtypes,))
-
-    if "dtype" not in kwargs:
-      kwargs["dtype"] = tf.int64
 
     # If max_tokens is set, the token must be greater than 1 - otherwise we
     # are creating a 0-element vocab, which doesn't make sense.
@@ -359,9 +372,61 @@ class IntegerLookup(index_lookup.IndexLookup):
         mask_token=mask_token,
         oov_token=oov_token,
         vocabulary=vocabulary,
+        vocabulary_dtype=vocabulary_dtype,
+        idf_weights=idf_weights,
         invert=invert,
         output_mode=output_mode,
         sparse=sparse,
         pad_to_max_tokens=pad_to_max_tokens,
         **kwargs)
     base_preprocessing_layer.keras_kpl_gauge.get_cell("IntegerLookup").set(True)
+
+  # We override this method solely to generate a docstring.
+  def adapt(self, data, batch_size=None, steps=None):
+    """Computes a vocabulary of interger terms from tokens in a dataset.
+
+    Calling `adapt()` on an `IntegerLookup` layer is an alternative to passing
+    in a precomputed vocabulary  on construction via the `vocabulary` argument.
+    An `IntegerLookup` layer should always be either adapted over a dataset or
+    supplied with a vocabulary.
+
+    During `adapt()`, the layer will build a vocabulary of all integer tokens
+    seen in the dataset, sorted by occurance count, with ties broken by sort
+    order of the tokens (high to low). At the end of `adapt()`, if `max_tokens`
+    is set, the voculary wil be truncated to `max_tokens` size. For example,
+    adapting a layer with `max_tokens=1000` will compute the 1000 most frequent
+    tokens occurring in the input dataset. If `output_mode='tf-idf'`, `adapt()`
+    will also learn the document frequencies of each token in the input dataset.
+
+    In order to make `StringLookup` efficient in any distribution context, the
+    vocabulary is kept static with respect to any compiled `tf.Graph`s that
+    call the layer. As a consequence, if the layer is adapted a second time,
+    any models using the layer should be re-compiled. For more information
+    see `tf.keras.layers.experimental.preprocessing.PreprocessingLayer.adapt`.
+
+    `adapt()` is meant only as a single machine utility to compute layer state.
+    To analyze a dataset that cannot fit on a single machine, see
+    [Tensorflow Transform](https://www.tensorflow.org/tfx/transform/get_started)
+    for a multi-machine, map-reduce solution.
+
+    Arguments:
+      data: The data to train on. It can be passed either as a
+          `tf.data.Dataset`, or as a numpy array.
+      batch_size: Integer or `None`.
+          Number of samples per state update.
+          If unspecified, `batch_size` will default to 32.
+          Do not specify the `batch_size` if your data is in the
+          form of datasets, generators, or `keras.utils.Sequence` instances
+          (since they generate batches).
+      steps: Integer or `None`.
+          Total number of steps (batches of samples)
+          When training with input tensors such as
+          TensorFlow data tensors, the default `None` is equal to
+          the number of samples in your dataset divided by
+          the batch size, or 1 if that cannot be determined. If x is a
+          `tf.data` dataset, and 'steps' is None, the epoch will run until
+          the input dataset is exhausted. When passing an infinitely
+          repeating dataset, you must specify the `steps` argument. This
+          argument is not supported with array inputs.
+    """
+    super().adapt(data, batch_size=batch_size, steps=steps)
