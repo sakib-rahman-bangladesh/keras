@@ -19,6 +19,7 @@ import os
 
 from absl import flags
 from keras import callbacks
+from keras import testing_utils
 from keras.distribute import distribute_strategy_test
 from keras.engine import base_layer
 from keras.engine import sequential as sequential_model_lib
@@ -26,6 +27,7 @@ from keras.engine import training
 from keras.layers import convolutional as conv_layer_lib
 from keras.layers import core as layer_lib
 from keras.layers import pooling as pool_layer_lib
+from keras.layers import regularization as regularization_layer_lib
 from keras.layers import reshaping as reshaping_layer_lib
 import numpy as np
 import tensorflow.compat.v2 as tf
@@ -140,10 +142,10 @@ def mnist_model(input_shape, enable_histograms=True):
           32, kernel_size=(3, 3), activation='relu', input_shape=input_shape))
   model.add(conv_layer_lib.Conv2D(64, (3, 3), activation='relu'))
   model.add(pool_layer_lib.MaxPooling2D(pool_size=(2, 2)))
-  model.add(layer_lib.Dropout(0.25))
+  model.add(regularization_layer_lib.Dropout(0.25))
   model.add(reshaping_layer_lib.Flatten())
   model.add(layer_lib.Dense(128, activation='relu'))
-  model.add(layer_lib.Dropout(0.5))
+  model.add(regularization_layer_lib.Dropout(0.5))
   model.add(layer_lib.Dense(NUM_CLASSES, activation='softmax'))
 
   # Adding custom pass-through layer for summary recording.
@@ -152,11 +154,11 @@ def mnist_model(input_shape, enable_histograms=True):
   return model
 
 
+@testing_utils.run_v2_only
 class AutoOutsideCompilationWithKerasTest(tf.test.TestCase):
 
   def setUp(self):
     super(AutoOutsideCompilationWithKerasTest, self).setUp()
-    tf.compat.v1.enable_v2_behavior()
     set_soft_device_placement(True)
     self.summary_dir = self.get_temp_dir()
 
@@ -285,5 +287,4 @@ class AutoOutsideCompilationWithKerasTest(tf.test.TestCase):
 
 
 if __name__ == '__main__':
-  tf.compat.v1.enable_eager_execution()
   tf.test.main()

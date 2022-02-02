@@ -49,13 +49,18 @@ from keras.layers.preprocessing.normalization import Normalization
 from keras.layers.preprocessing.string_lookup import StringLookup
 from keras.layers.preprocessing.text_vectorization import TextVectorization
 
-# Advanced activations.
-from keras.layers.advanced_activations import LeakyReLU
-from keras.layers.advanced_activations import PReLU
-from keras.layers.advanced_activations import ELU
-from keras.layers.advanced_activations import ReLU
-from keras.layers.advanced_activations import ThresholdedReLU
-from keras.layers.advanced_activations import Softmax
+# Activations layers.
+from keras.layers.activation.relu import ReLU
+from keras.layers.activation.softmax import Softmax
+from keras.layers.activation.leaky_relu import LeakyReLU
+from keras.layers.activation.prelu import PReLU
+from keras.layers.activation.elu import ELU
+from keras.layers.activation.thresholded_relu import ThresholdedReLU
+
+# Attention layers.
+from keras.layers.attention.multi_head_attention import MultiHeadAttention
+from keras.layers.attention.attention import Attention
+from keras.layers.attention.additive_attention import AdditiveAttention
 
 # Convolution layers.
 from keras.layers.convolutional.conv1d import Conv1D
@@ -79,6 +84,16 @@ from keras.layers.convolutional.conv3d_transpose import Convolution3DTranspose
 from keras.layers.convolutional.separable_conv1d import SeparableConvolution1D
 from keras.layers.convolutional.separable_conv2d import SeparableConvolution2D
 
+# Regularization layers.
+from keras.layers.regularization.dropout import Dropout
+from keras.layers.regularization.spatial_dropout1d import SpatialDropout1D
+from keras.layers.regularization.spatial_dropout2d import SpatialDropout2D
+from keras.layers.regularization.spatial_dropout3d import SpatialDropout3D
+from keras.layers.regularization.gaussian_dropout import GaussianDropout
+from keras.layers.regularization.gaussian_noise import GaussianNoise
+from keras.layers.regularization.activity_regularization import ActivityRegularization
+from keras.layers.regularization.alpha_dropout import AlphaDropout
+
 # Reshaping layers.
 from keras.layers.reshaping.cropping1d import Cropping1D
 from keras.layers.reshaping.cropping2d import Cropping2D
@@ -96,23 +111,14 @@ from keras.layers.reshaping.zero_padding3d import ZeroPadding3D
 
 # Core layers.
 from keras.layers.core.activation import Activation
-from keras.layers.core.activity_regularization import ActivityRegularization
 from keras.layers.core.dense import Dense
-from keras.layers.core.dropout import Dropout
 from keras.layers.core.lambda_layer import Lambda
 from keras.layers.core.masking import Masking
-from keras.layers.core.spatial_dropout import SpatialDropout1D
-from keras.layers.core.spatial_dropout import SpatialDropout2D
-from keras.layers.core.spatial_dropout import SpatialDropout3D
 from keras.layers.core.tf_op_layer import ClassMethod
 from keras.layers.core.tf_op_layer import InstanceMethod
 from keras.layers.core.tf_op_layer import InstanceProperty
 from keras.layers.core.tf_op_layer import SlicingOpLambda
 from keras.layers.core.tf_op_layer import TFOpLambda
-
-# Dense Attention layers.
-from keras.layers.dense_attention import AdditiveAttention
-from keras.layers.dense_attention import Attention
 
 # Embedding layers.
 from keras.layers.embeddings import Embedding
@@ -120,35 +126,29 @@ from keras.layers.embeddings import Embedding
 # Einsum-based dense layer/
 from keras.layers.einsum_dense import EinsumDense
 
-# Multi-head Attention layer.
-from keras.layers.multi_head_attention import MultiHeadAttention
-
 # Locally-connected layers.
-from keras.layers.local import LocallyConnected1D
-from keras.layers.local import LocallyConnected2D
+from keras.layers.locally_connected.locally_connected1d import LocallyConnected1D
+from keras.layers.locally_connected.locally_connected2d import LocallyConnected2D
 
-# Merge layers.
-from keras.layers.merge import Add
-from keras.layers.merge import Subtract
-from keras.layers.merge import Multiply
-from keras.layers.merge import Average
-from keras.layers.merge import Maximum
-from keras.layers.merge import Minimum
-from keras.layers.merge import Concatenate
-from keras.layers.merge import Dot
-from keras.layers.merge import add
-from keras.layers.merge import subtract
-from keras.layers.merge import multiply
-from keras.layers.merge import average
-from keras.layers.merge import maximum
-from keras.layers.merge import minimum
-from keras.layers.merge import concatenate
-from keras.layers.merge import dot
+# Merging layers.
+from keras.layers.merging.add import Add
+from keras.layers.merging.subtract import Subtract
+from keras.layers.merging.multiply import Multiply
+from keras.layers.merging.average import Average
+from keras.layers.merging.maximum import Maximum
+from keras.layers.merging.minimum import Minimum
+from keras.layers.merging.concatenate import Concatenate
+from keras.layers.merging.dot import Dot
 
-# Noise layers.
-from keras.layers.noise import AlphaDropout
-from keras.layers.noise import GaussianNoise
-from keras.layers.noise import GaussianDropout
+# Merging functions.
+from keras.layers.merging.add import add
+from keras.layers.merging.subtract import subtract
+from keras.layers.merging.multiply import multiply
+from keras.layers.merging.average import average
+from keras.layers.merging.maximum import maximum
+from keras.layers.merging.minimum import minimum
+from keras.layers.merging.concatenate import concatenate
+from keras.layers.merging.dot import dot
 
 # Normalization layers.
 from keras.layers.normalization.layer_normalization import LayerNormalization

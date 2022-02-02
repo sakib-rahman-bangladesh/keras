@@ -29,29 +29,29 @@ py_library(
     ],
     srcs_version = "PY3",
     deps = [
-        ":advanced_activations",
         ":convolutional_recurrent",
         ":cudnn_recurrent",
-        ":dense_attention",
         ":einsum_dense",
         ":embeddings",
         ":kernelized",
-        ":local",
-        ":merge",
-        ":multi_head_attention",
         ":noise",
         ":recurrent",
         ":recurrent_v2",
         ":rnn_cell_wrapper_v2",
         ":wrappers",
         "//keras/feature_column",
+        "//keras/layers/activation",
+        "//keras/layers/attention",
         "//keras/layers/convolutional",
         "//keras/layers/core",
+        "//keras/layers/locally_connected",
+        "//keras/layers/merging",
         "//keras/layers/normalization",
         "//keras/layers/pooling",
         "//keras/layers/preprocessing",
+        "//keras/layers/regularization",
         "//keras/layers/reshaping",
-        "//keras/premade",
+        "//keras/premade_models",
         "//keras/utils:tf_utils",
     ],
 )
@@ -82,22 +82,6 @@ cuda_py_test(
         "//keras:combinations",
         "//keras:testing_utils",
         "//keras/layers",
-    ],
-)
-
-py_library(
-    name = "advanced_activations",
-    srcs = ["advanced_activations.py"],
-    srcs_version = "PY3",
-    deps = [
-        "//:expect_tensorflow_installed",
-        "//keras:backend",
-        "//keras:base_layer",
-        "//keras:constraints",
-        "//keras:regularizers",
-        "//keras/engine:input_spec",
-        "//keras/initializers",
-        "//keras/utils:tf_utils",
     ],
 )
 
@@ -139,34 +123,8 @@ py_library(
 )
 
 py_library(
-    name = "dense_attention",
-    srcs = ["dense_attention.py"],
-    srcs_version = "PY3",
-    deps = [
-        "//:expect_tensorflow_installed",
-        "//keras:backend",
-        "//keras:base_layer",
-        "//keras/utils:tf_utils",
-    ],
-)
-
-py_library(
     name = "einsum_dense",
     srcs = ["einsum_dense.py"],
-    srcs_version = "PY3",
-    deps = [
-        "//:expect_tensorflow_installed",
-        "//keras:activations",
-        "//keras:base_layer",
-        "//keras:constraints",
-        "//keras:regularizers",
-        "//keras/initializers",
-    ],
-)
-
-py_library(
-    name = "multi_head_attention",
-    srcs = ["multi_head_attention.py"],
     srcs_version = "PY3",
     deps = [
         "//:expect_tensorflow_installed",
@@ -192,46 +150,13 @@ py_library(
 )
 
 py_library(
-    name = "local",
-    srcs = ["local.py"],
-    srcs_version = "PY3",
-    deps = [
-        "//:expect_numpy_installed",
-        "//:expect_tensorflow_installed",
-        "//keras:activations",
-        "//keras:backend",
-        "//keras:base_layer",
-        "//keras:constraints",
-        "//keras:regularizers",
-        "//keras/engine:input_spec",
-        "//keras/initializers",
-        "//keras/utils:engine_utils",
-        "//keras/utils:tf_utils",
-    ],
-)
-
-py_library(
-    name = "merge",
-    srcs = ["merge.py"],
-    srcs_version = "PY3",
-    deps = [
-        "//:expect_tensorflow_installed",
-        "//keras:backend",
-        "//keras:base_layer",
-        "//keras/utils:tf_utils",
-    ],
-)
-
-py_library(
     name = "noise",
     srcs = ["noise.py"],
     srcs_version = "PY3",
     deps = [
-        "//:expect_numpy_installed",
-        "//:expect_tensorflow_installed",
-        "//keras:backend",
-        "//keras:base_layer",
-        "//keras/utils:tf_utils",
+        "//keras/layers/regularization:alpha_dropout",
+        "//keras/layers/regularization:gaussian_dropout",
+        "//keras/layers/regularization:gaussian_noise",
     ],
 )
 
@@ -291,18 +216,6 @@ py_library(
         "//keras/utils:generic_utils",
         "//keras/utils:layer_utils",
         "//keras/utils:tf_utils",
-    ],
-)
-
-tf_py_test(
-    name = "advanced_activations_test",
-    size = "medium",
-    srcs = ["advanced_activations_test.py"],
-    python_version = "PY3",
-    deps = [
-        "//:expect_absl_installed",
-        "//:expect_tensorflow_installed",
-        "//keras",
     ],
 )
 
@@ -368,80 +281,11 @@ tf_py_test(
 )
 
 tf_py_test(
-    name = "dense_attention_test",
-    size = "medium",
-    srcs = ["dense_attention_test.py"],
-    python_version = "PY3",
-    deps = [
-        "//:expect_absl_installed",
-        "//:expect_numpy_installed",
-        "//:expect_tensorflow_installed",
-        "//keras",
-        "//keras:combinations",
-    ],
-)
-
-tf_py_test(
-    name = "multi_head_attention_test",
-    srcs = ["multi_head_attention_test.py"],
-    python_version = "PY3",
-    deps = [
-        ":multi_head_attention",
-        "//:expect_absl_installed",
-        "//:expect_tensorflow_installed",
-        "//keras",
-    ],
-)
-
-tf_py_test(
     name = "einsum_dense_test",
     srcs = ["einsum_dense_test.py"],
     python_version = "PY3",
     deps = [
         ":einsum_dense",
-        "//:expect_absl_installed",
-        "//:expect_tensorflow_installed",
-        "//keras",
-    ],
-)
-
-tf_py_test(
-    name = "local_test",
-    size = "medium",
-    srcs = ["local_test.py"],
-    python_version = "PY3",
-    shard_count = 4,
-    tags = ["no_windows"],
-    deps = [
-        "//:expect_absl_installed",
-        "//:expect_numpy_installed",
-        "//:expect_tensorflow_installed",
-        "//keras",
-        "//keras:combinations",
-    ],
-)
-
-tf_py_test(
-    name = "merge_test",
-    size = "medium",
-    srcs = ["merge_test.py"],
-    python_version = "PY3",
-    shard_count = 4,
-    deps = [
-        "//:expect_absl_installed",
-        "//:expect_numpy_installed",
-        "//:expect_tensorflow_installed",
-        "//keras",
-        "//keras:combinations",
-    ],
-)
-
-tf_py_test(
-    name = "noise_test",
-    size = "medium",
-    srcs = ["noise_test.py"],
-    python_version = "PY3",
-    deps = [
         "//:expect_absl_installed",
         "//:expect_tensorflow_installed",
         "//keras",

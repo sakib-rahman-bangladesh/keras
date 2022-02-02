@@ -21,18 +21,19 @@ import numpy as np
 from keras import keras_parameterized
 from keras import layers
 from keras import models
-from keras.layers import advanced_activations
+from keras import testing_utils
+from keras.layers import activation
+from keras.layers import attention
 from keras.layers import convolutional
 from keras.layers import convolutional_recurrent
 from keras.layers import core
-from keras.layers import dense_attention
 from keras.layers import embeddings
-from keras.layers import local
-from keras.layers import merge
-from keras.layers import noise
+from keras.layers import locally_connected
+from keras.layers import merging
 from keras.layers import pooling
 from keras.layers import recurrent
 from keras.layers import recurrent_v2
+from keras.layers import regularization
 from keras.layers import reshaping
 from keras.layers import wrappers
 from keras.layers.normalization import batch_normalization
@@ -61,6 +62,7 @@ def _create_normalization_layer_without_adapt():
   )
 
 
+@testing_utils.run_v2_only
 class LayerCorrectnessTest(keras_parameterized.TestCase):
 
   def setUp(self):
@@ -82,12 +84,12 @@ class LayerCorrectnessTest(keras_parameterized.TestCase):
     return model
 
   @parameterized.named_parameters(
-      ('LeakyReLU', advanced_activations.LeakyReLU, (2, 2)),
-      ('PReLU', advanced_activations.PReLU, (2, 2)),
-      ('ELU', advanced_activations.ELU, (2, 2)),
-      ('ThresholdedReLU', advanced_activations.ThresholdedReLU, (2, 2)),
-      ('Softmax', advanced_activations.Softmax, (2, 2)),
-      ('ReLU', advanced_activations.ReLU, (2, 2)),
+      ('LeakyReLU', activation.LeakyReLU, (2, 2)),
+      ('PReLU', activation.PReLU, (2, 2)),
+      ('ELU', activation.ELU, (2, 2)),
+      ('ThresholdedReLU', activation.ThresholdedReLU, (2, 2)),
+      ('Softmax', activation.Softmax, (2, 2)),
+      ('ReLU', activation.ReLU, (2, 2)),
       ('Conv1D', lambda: convolutional.Conv1D(2, 2), (2, 2, 1)),
       ('Conv2D', lambda: convolutional.Conv2D(2, 2), (2, 2, 2, 1)),
       ('Conv3D', lambda: convolutional.Conv3D(2, 2), (2, 2, 2, 2, 1)),
@@ -104,32 +106,33 @@ class LayerCorrectnessTest(keras_parameterized.TestCase):
        lambda: convolutional_recurrent.ConvLSTM2D(4, kernel_size=(2, 2)),
        (4, 4, 4, 4, 4)),
       ('Dense', lambda: core.Dense(2), (2, 2)),
-      ('Dropout', lambda: core.Dropout(0.5), (2, 2)),
-      ('SpatialDropout2D', lambda: core.SpatialDropout2D(0.5), (2, 2, 2, 2)),
+      ('Dropout', lambda: regularization.Dropout(0.5), (2, 2)),
+      ('SpatialDropout2D',
+       lambda: regularization.SpatialDropout2D(0.5), (2, 2, 2, 2)),
       ('Activation', lambda: core.Activation('sigmoid'), (2, 2)),
       ('Reshape', lambda: reshaping.Reshape((1, 4, 1)), (2, 2, 2)),
       ('Permute', lambda: reshaping.Permute((2, 1)), (2, 2, 2)),
-      ('Attention', dense_attention.Attention, [(2, 2, 3), (2, 3, 3),
-                                                (2, 3, 3)]),
-      ('AdditiveAttention', dense_attention.AdditiveAttention, [(2, 2, 3),
-                                                                (2, 3, 3),
-                                                                (2, 3, 3)]),
+      ('Attention', attention.Attention, [(2, 2, 3), (2, 3, 3), (2, 3, 3)]),
+      ('AdditiveAttention', attention.AdditiveAttention, [(2, 2, 3),
+                                                          (2, 3, 3),
+                                                          (2, 3, 3)]),
       ('Embedding', lambda: embeddings.Embedding(4, 4),
        (2, 4), 2e-3, 2e-3, np.random.randint(4, size=(2, 4))),
-      ('LocallyConnected1D', lambda: local.LocallyConnected1D(2, 2), (2, 2, 1)),
-      ('LocallyConnected2D', lambda: local.LocallyConnected2D(2, 2),
+      ('LocallyConnected1D', lambda: locally_connected.LocallyConnected1D(2, 2),
+       (2, 2, 1)),
+      ('LocallyConnected2D', lambda: locally_connected.LocallyConnected2D(2, 2),
        (2, 2, 2, 1)),
-      ('Add', merge.Add, [(2, 2), (2, 2)]),
-      ('Subtract', merge.Subtract, [(2, 2), (2, 2)]),
-      ('Multiply', merge.Multiply, [(2, 2), (2, 2)]),
-      ('Average', merge.Average, [(2, 2), (2, 2)]),
-      ('Maximum', merge.Maximum, [(2, 2), (2, 2)]),
-      ('Minimum', merge.Minimum, [(2, 2), (2, 2)]),
-      ('Concatenate', merge.Concatenate, [(2, 2), (2, 2)]),
-      ('Dot', lambda: merge.Dot(1), [(2, 2), (2, 2)]),
-      ('GaussianNoise', lambda: noise.GaussianNoise(0.5), (2, 2)),
-      ('GaussianDropout', lambda: noise.GaussianDropout(0.5), (2, 2)),
-      ('AlphaDropout', lambda: noise.AlphaDropout(0.5), (2, 2)),
+      ('Add', merging.Add, [(2, 2), (2, 2)]),
+      ('Subtract', merging.Subtract, [(2, 2), (2, 2)]),
+      ('Multiply', merging.Multiply, [(2, 2), (2, 2)]),
+      ('Average', merging.Average, [(2, 2), (2, 2)]),
+      ('Maximum', merging.Maximum, [(2, 2), (2, 2)]),
+      ('Minimum', merging.Minimum, [(2, 2), (2, 2)]),
+      ('Concatenate', merging.Concatenate, [(2, 2), (2, 2)]),
+      ('Dot', lambda: merging.Dot(1), [(2, 2), (2, 2)]),
+      ('GaussianNoise', lambda: regularization.GaussianNoise(0.5), (2, 2)),
+      ('GaussianDropout', lambda: regularization.GaussianDropout(0.5), (2, 2)),
+      ('AlphaDropout', lambda: regularization.AlphaDropout(0.5), (2, 2)),
       ('BatchNormalization', batch_normalization.BatchNormalization,
        (2, 2), 1e-2, 1e-2),
       ('LayerNormalization', layer_normalization.LayerNormalization, (2, 2)),
@@ -156,13 +159,13 @@ class LayerCorrectnessTest(keras_parameterized.TestCase):
        (2, 2, 2)),
       ('Bidirectional',
        lambda: wrappers.Bidirectional(recurrent.SimpleRNN(units=4)), (2, 2, 2)),
-      ('AttentionLayerCausal', lambda: dense_attention.Attention(causal=True), [
+      ('AttentionLayerCausal', lambda: attention.Attention(causal=True), [
           (2, 2, 3), (2, 3, 3), (2, 3, 3)
       ]),
       ('AdditiveAttentionLayerCausal',
-       lambda: dense_attention.AdditiveAttention(causal=True), [(2, 3, 4),
-                                                                (2, 3, 4),
-                                                                (2, 3, 4)]),
+       lambda: attention.AdditiveAttention(causal=True), [(2, 3, 4),
+                                                          (2, 3, 4),
+                                                          (2, 3, 4)]),
       ('NormalizationAdapt', _create_normalization_layer_with_adapt, (4, 4)),
       ('NormalizationNoAdapt', _create_normalization_layer_without_adapt,
        (4, 4)),
@@ -261,5 +264,4 @@ class LayerCorrectnessTest(keras_parameterized.TestCase):
 
 
 if __name__ == '__main__':
-  tf.compat.v1.enable_v2_behavior()
   tf.test.main()
